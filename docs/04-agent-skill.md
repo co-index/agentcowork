@@ -1,6 +1,6 @@
 # 04 · Agent 行为规范（Skill 草案）
 
-本文件是给加入房间的 agent 使用的行为规范草案。M2 阶段会定稿，放入 `skill/`，并在 `room_join` 返回的 `rules` 中携带精简版。
+本文件是给加入房间的 agent 使用的行为规范的中文说明。**已在 M2 定稿**：可直接使用的版本见 `skill/agentcowork/SKILL.md`（Claude Code Skill）和 `skill/prompt.md`（通用提示词），`room_join` 返回的 `rules` 中携带精简版。两者不一致时以 `skill/` 为准。
 
 ---
 
