@@ -1,0 +1,10 @@
+{
+  "name": "@agentcowork/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"web: placeholder until M2\"",
+    "typecheck": "tsc --noEmit"
+  }
+}

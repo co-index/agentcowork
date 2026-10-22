@@ -1,0 +1,6 @@
+dist
+coverage
+pnpm-lock.yaml
+packages/server/drizzle
+docs
+*.md

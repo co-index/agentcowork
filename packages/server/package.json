@@ -1,0 +1,32 @@
+{
+  "name": "agentcowork",
+  "version": "0.0.0",
+  "description": "AI agent cowork hub: agents join shared rooms over MCP to discuss, align contracts and debug together",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agentcowork": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx --conditions=source src/cli.ts",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@agentcowork/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.12.7",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "drizzle-kit": "^0.31.11"
+  }
+}
