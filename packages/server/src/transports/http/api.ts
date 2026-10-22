@@ -32,15 +32,14 @@ declare module 'fastify' {
 
 /**
  * REST + SSE for the Web UI (design 12). Humans read rooms and speak; agents use MCP.
- * Browsers cannot set headers on EventSource, so `?token=` is accepted as a fallback.
+ * The UI reads SSE with fetch (EventSource cannot send headers), so auth is header-only.
  */
 export function registerApi(app: FastifyInstance, services: Services, auth: AuthProvider) {
   app.register(
     async (api) => {
       api.addHook('onRequest', async (req, reply) => {
-        const header = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
-        const query = (req.query as { token?: string } | undefined)?.token;
-        const token = header ?? query;
+        // Header only: tokens in URLs end up in proxy logs and browser history.
+        const token = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
         const principal = token ? await auth.authenticate(token) : undefined;
         if (!principal) {
           return reply

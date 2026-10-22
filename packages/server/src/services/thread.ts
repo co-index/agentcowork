@@ -1,4 +1,5 @@
 import { BROADCAST, type Message, type NewMessage } from '../domain/models.js';
+import { redact } from '../security/redact.js';
 import { newId } from './ids.js';
 import { KeyedMutex } from './keyed-mutex.js';
 import type { Clock, EventBus, Repository } from './ports.js';
@@ -26,6 +27,8 @@ export class Thread {
   async appendLocked(entry: ThreadEntry): Promise<Message> {
     const message = await this.repo.appendMessage({
       ...entry,
+      // Last line of defence: nothing reaches storage unredacted, whichever service wrote it.
+      content: redact(entry.content).text,
       id: newId('m'),
       createdAt: this.clock.now(),
     });

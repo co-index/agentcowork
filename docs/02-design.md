@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论）
+版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正）
 
 ## 1. 目标与非目标
 
@@ -313,7 +313,7 @@ room_join
 ### 8.2 严格同步（参考 AgentChatBus）
 
 1. `room_join`、`msg_wait`，以及 `msg_post` 成功或冲突时，都会签发新的 `reply_token`。token 绑定参与者和签发时的 `current_seq`，只能用一次，有效期 10 分钟
-2. `msg_post` 校验：token 有效、未使用，并且 `expected_last_seq == current_seq`（其他人发了新消息就算冲突；自己刚发的那条除外）
+2. `msg_post` 校验：token 有效、未使用，并且 `expected_last_seq == current_seq`（其他人发了新消息就算冲突；自己刚发的那条除外）。冲突判断的起点取 `min(expected_last_seq, token 签发时的 seq)`：token 证明了 agent 实际看到哪里，不能拿旧 token 自报一个更新的 seq 绕过同步
 3. 冲突时返回 `STALE_CONTEXT` 和漏掉的消息，保证 **agent 发言前一定看到了全部上下文**
 4. token 无效时同样附上漏掉的消息和新 token，agent 不会因为丢了 token 而卡住
 5. 实现：所有消息写入（包括加入、离开等系统消息）都在同一把房间锁内完成，校验和写入不会被其他写入插队。v1 是进程内锁；多副本部署（M5）时需要换成数据库行锁或 Redis 锁
@@ -368,7 +368,7 @@ room_join
 - `WaitCoordinator`：维护 `room_id → Set<waiter>`；消息写入后，通过 EventBus 通知，按唤醒条件筛选后 resolve 对应的 waiter；客户端断开时（`AbortSignal`）清理 waiter
 - 等待状态同步到参与者的 `status=waiting`，Web 页面上显示为"在听"
 - **先注册 waiter，再读积压消息**，避免读完和挂起之间到达的消息被漏掉
-- MCP 会话结束（客户端 DELETE 或空闲 30 分钟被回收）时，该会话操作过的参与者变为 `offline`；之后再用同一个 `participant_id` 调用工具会自动恢复为 `online`
+- MCP 会话结束（客户端 DELETE 或空闲 30 分钟被回收）时，该会话操作过、且没有被其他存活会话使用的参与者变为 `offline`（客户端重连后会用新会话继续操作同一个参与者）；同一参与者有多个并发 `msg_wait` 时，最后一个结束才回到 `online`；之后再用同一个 `participant_id` 调用工具会自动恢复为 `online`
 - SDK 在 SSE 响应上每 15 秒发送一次注释帧作为保活，与 progress 通知互为补充；响应带 `X-Accel-Buffering: no`
 - **可续传**：每个 MCP 会话配一个有上限的内存事件存储（500 条、10 分钟）。代理切断响应流时，客户端带 `Last-Event-ID` 重连即可拿回 `msg_wait` 的结果，否则结果丢失、客户端会挂到自己的超时
 - nginx 实测结论见 `docs/05-client-compat.md`：`proxy_read_timeout` 衡量的是两次读之间的间隔，Hub 每 15 秒有数据写出，默认 60 秒不会切断；推荐配置见 `deploy/nginx/agentcowork.conf`
@@ -435,7 +435,7 @@ room_join
 | `GET /api/rooms/:room/board/:key/history` | Board section 的历史版本 |
 | `GET /api/rooms/:room/events` | SSE：`ready`、`message`（新消息）、`members`（成员状态变化），每 15 秒发送注释帧保活 |
 
-- 认证与 MCP 相同（`Authorization: Bearer`）。浏览器原生 EventSource 不能带请求头，前端用 fetch 读取 SSE 流；服务端也接受 `?token=` 作为兜底
+- 认证与 MCP 相同，**只接受** `Authorization: Bearer` 请求头。浏览器原生 EventSource 不能带请求头，前端用 fetch 读取 SSE 流。不接受 URL 中的 `?token=`，避免 token 进入代理日志和浏览器历史
 - 错误码映射为 HTTP 状态：`NOT_FOUND` 404、`FORBIDDEN` 403、`INVALID_ARGUMENT` 400、冲突类 409、`LIMIT_REACHED` 429
 - REST 返回原文，不加注入边界（边界只针对 agent）；前端用 react-markdown 渲染，不渲染原始 HTML，避免 XSS
 - Host 模式启动输出中的 Web 链接形如 `http://<地址>/#token=<token>`：token 放在 hash 中，不会出现在服务端日志和 Referer 里；前端读取后存入 localStorage 并从地址栏去掉。Host 重启后 token 失效，前端收到 401 时会清除旧 token 并提示重新输入

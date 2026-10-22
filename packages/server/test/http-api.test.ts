@@ -66,7 +66,8 @@ async function collectEvents(res: Response, count: number) {
 describe('REST API', () => {
   it('requires a token', async () => {
     expect((await fetch(`${base}/api/rooms`)).status).toBe(401);
-    expect((await fetch(`${base}/api/rooms?token=${auth.token}`)).status).toBe(200);
+    // Tokens in URLs leak into logs; only the Authorization header is accepted.
+    expect((await fetch(`${base}/api/rooms?token=${auth.token}`)).status).toBe(401);
   });
 
   it('lists rooms and returns room detail with board and stages', async () => {

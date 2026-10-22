@@ -216,6 +216,82 @@ describe('MessageService', () => {
     });
   });
 
+  describe('audit regressions', () => {
+    it('a stale token cannot be paired with a newer expected_last_seq', async () => {
+      const { host, guest } = await roomWithTwo(s);
+      const hostSync = (
+        await s.messages.wait(alice, {
+          room: 'REQ-1',
+          participant_id: host.participant_id,
+          after_seq: host.sync.current_seq,
+        })
+      ).sync;
+      const posted = await post(s, alice, host, hostSync, 'bob has not seen this');
+      // bob claims to have seen seq `posted.seq` while holding a token from before it.
+      const err = await expectAppError(
+        post(s, bob, guest, { current_seq: posted.seq, reply_token: guest.sync.reply_token }, 'x'),
+        'STALE_CONTEXT',
+      );
+      const missed = err.data.missed_messages as { content: string }[];
+      expect(missed.map((m) => m.content)).toEqual(['bob has not seen this']);
+    });
+
+    it('a post queued behind the room lock fails if the participant left meanwhile', async () => {
+      const { guest } = await roomWithTwo(s);
+      const room = (await s.repo.findRoom('REQ-1'))!;
+      let pending!: Promise<unknown>;
+      await s.thread.lock(room.id, async () => {
+        pending = post(s, bob, guest, guest.sync, 'too late').catch((e) => e);
+        await new Promise((r) => setTimeout(r, 20));
+        await s.repo.updateParticipant(guest.participant_id, { status: 'left' });
+      });
+      expect(((await pending) as { code?: string }).code).toBe('NOT_A_PARTICIPANT');
+      const list = await s.messages.list({ room: 'REQ-1' });
+      expect(list.messages.some((m) => m.content === 'too late')).toBe(false);
+    });
+
+    it('stays waiting until the last concurrent msg_wait ends', async () => {
+      const { guest } = await roomWithTwo(s);
+      const first = new AbortController();
+      const args = {
+        room: 'REQ-1',
+        participant_id: guest.participant_id,
+        after_seq: guest.sync.current_seq,
+      };
+      const a = s.messages.wait(bob, args, { signal: first.signal });
+      const second = new AbortController();
+      const b = s.messages.wait(bob, args, { signal: second.signal });
+      await new Promise((r) => setTimeout(r, 20));
+      first.abort();
+      await a;
+      expect((await s.repo.findParticipant(guest.participant_id))?.status).toBe('waiting');
+      second.abort();
+      await b;
+      expect((await s.repo.findParticipant(guest.participant_id))?.status).toBe('online');
+    });
+
+    it('redacts the requirement message and leave summaries, not just the board', async () => {
+      const secret = 'glpat-abcdefghijklmnopqrstu';
+      const created = await s.rooms.create(alice, {
+        title: 'leak',
+        type: 'feature',
+        slug: 'REQ-2',
+        requirement: `deploy with ${secret}`,
+        role: 'backend',
+      });
+      await s.rooms.leave(alice, {
+        room: 'REQ-2',
+        participant_id: created.participant_id,
+        summary: `used ${secret}`,
+      });
+      const list = await s.messages.list({ room: 'REQ-2' });
+      expect(list.messages.some((m) => m.content.includes(secret))).toBe(false);
+      expect((await s.repo.findParticipant(created.participant_id))?.leaveSummary).not.toContain(
+        secret,
+      );
+    });
+  });
+
   describe('permissions and validation', () => {
     it('only the host may post decisions', async () => {
       const { guest } = await roomWithTwo(s);

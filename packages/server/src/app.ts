@@ -27,6 +27,7 @@ export interface Services {
   messages: MessageService;
   board: BoardService;
   stages: StageService;
+  thread: Thread;
   waits: WaitCoordinator;
 }
 
@@ -57,7 +58,7 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
     waits,
     config.waitMaxSeconds,
   );
-  return { repo, bus, access, rooms, messages, board, stages, waits };
+  return { repo, bus, access, rooms, messages, board, stages, thread, waits };
 }
 
 export interface Hub {

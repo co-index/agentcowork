@@ -45,6 +45,9 @@ interface Batch {
 }
 
 export class MessageService {
+  /** Concurrent msg_wait calls per participant; status returns to online when the last ends. */
+  private readonly activeWaits = new Map<string, number>();
+
   constructor(
     private readonly repo: Repository,
     private readonly access: Access,
@@ -85,15 +88,24 @@ export class MessageService {
     try {
       // A paused or closed room returns at once so agents stop polling it.
       if (room.status === 'open' && !batch.messages.some(wakes)) {
-        await this.access.setStatus(participant, 'waiting');
-        const outcome = await handle.promise;
-        timedOut = outcome === 'timeout';
-        batch = await this.readAfter(room.id, input.after_seq);
+        this.activeWaits.set(participant.id, (this.activeWaits.get(participant.id) ?? 0) + 1);
+        try {
+          await this.access.setStatus(participant, 'waiting');
+          const outcome = await handle.promise;
+          timedOut = outcome === 'timeout';
+          batch = await this.readAfter(room.id, input.after_seq);
+        } finally {
+          const left = (this.activeWaits.get(participant.id) ?? 1) - 1;
+          if (left > 0) this.activeWaits.set(participant.id, left);
+          else this.activeWaits.delete(participant.id);
+        }
       }
     } finally {
       handle.cancel();
       const fresh = await this.repo.findParticipant(participant.id);
-      if (fresh && fresh.status === 'waiting') await this.access.setStatus(fresh, 'online');
+      if (fresh?.status === 'waiting' && !this.activeWaits.has(participant.id)) {
+        await this.access.setStatus(fresh, 'online');
+      }
     }
 
     const others = batch.messages.filter((m) => m.participantId !== participant.id);
@@ -117,6 +129,11 @@ export class MessageService {
 
     return this.thread.lock(ctx.room.id, async () => {
       const room = (await this.repo.findRoom(ctx.room.id)) ?? ctx.room;
+      // Re-check under the lock: a concurrent room_leave may have run since requireParticipant.
+      const current = await this.repo.findParticipant(participant.id);
+      if (!current || current.status === 'left') {
+        throw new AppError('NOT_A_PARTICIPANT', 'You have left this room; call room_join again');
+      }
       if (input.kind === 'decision' && room.hostParticipantId !== participant.id) {
         throw new AppError('FORBIDDEN', 'Only the host (or a human) may post kind=decision');
       }
@@ -146,15 +163,17 @@ export class MessageService {
           input.expected_last_seq,
         );
       }
+      // The token proves what the caller was actually shown, so never trust a cursor past it.
       // Messages you posted yourself never make your context stale.
-      const batch = await this.readAfter(room.id, input.expected_last_seq);
+      const seenSeq = Math.min(input.expected_last_seq, token.issuedAtSeq);
+      const batch = await this.readAfter(room.id, seenSeq);
       if (batch.messages.some((m) => m.participantId !== participant.id)) {
         throw await this.syncError(
           'STALE_CONTEXT',
-          'New messages arrived since expected_last_seq. Read missed_messages, then rewrite or resend.',
+          'New messages arrived since your last sync. Read missed_messages, then rewrite or resend.',
           room,
           participant,
-          input.expected_last_seq,
+          seenSeq,
         );
       }
 

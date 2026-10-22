@@ -44,6 +44,11 @@ export function fenceUntrusted<T extends object>(
       ]),
     );
   }
+  // VERSION_CONFLICT carries the section another participant wrote.
+  if (out.current && typeof out.current === 'object' && 'content' in out.current) {
+    const current = out.current as Fenced & { key?: string };
+    out.current = { ...current, content: fence(current.content, ` board="${current.key ?? ''}"`) };
+  }
   if (out.board_summary && typeof out.board_summary === 'object') {
     out.board_summary = Object.fromEntries(
       Object.entries(out.board_summary as Record<string, { excerpt: string }>).map(([key, s]) => [

@@ -72,7 +72,10 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
     const session = sessions.get(id);
     if (!session) return;
     sessions.delete(id);
-    void services.access.markOffline(session.participants).catch(() => undefined);
+    // A client that reconnected drives the same participant from a newer session.
+    const stillDriven = new Set([...sessions.values()].flatMap((s) => [...s.participants]));
+    const orphaned = [...session.participants].filter((p) => !stillDriven.has(p));
+    void services.access.markOffline(orphaned).catch(() => undefined);
   };
 
   app.post('/mcp', async (req, reply) => {

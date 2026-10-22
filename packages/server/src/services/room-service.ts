@@ -11,6 +11,7 @@ import { AppError } from '../domain/errors.js';
 import type { Participant, Principal, Room } from '../domain/models.js';
 import type { Access } from './access.js';
 import type { BoardService } from './board-service.js';
+import { redact } from '../security/redact.js';
 import { newId, randomToken } from './ids.js';
 import type { Clock, EventBus, Repository } from './ports.js';
 import type { ReplyTokens } from './reply-tokens.js';
@@ -134,7 +135,7 @@ export class RoomService {
       status: 'left',
       leftAt: now,
       lastSeenAt: now,
-      leaveSummary: input.summary ?? null,
+      leaveSummary: input.summary === undefined ? null : redact(input.summary).text,
     });
     this.bus.publish({
       type: 'participant.updated',

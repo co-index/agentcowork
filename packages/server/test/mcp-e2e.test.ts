@@ -134,6 +134,30 @@ describe('MCP endpoint', () => {
     await host.close();
   });
 
+  it('closing an old session does not mark a participant offline that a newer session drives', async () => {
+    const first = await connect();
+    const created = await call<JoinResult>(first, 'room_create', {
+      title: 'reconnect',
+      role: 'backend',
+    });
+    // The client reconnects: a new session keeps driving the same participant.
+    const second = await connect();
+    const waiting = call<WaitResult>(second, 'msg_wait', {
+      room: created.room.slug,
+      participant_id: created.participant_id,
+      after_seq: created.sync.current_seq,
+      timeout_seconds: 2,
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    await (first.transport as StreamableHTTPClientTransport).terminateSession();
+    await first.close();
+    await new Promise((r) => setTimeout(r, 100));
+    const p = await hub.services.repo.findParticipant(created.participant_id);
+    expect(p?.status).toBe('waiting');
+    await waiting;
+    await second.close();
+  });
+
   it('three agents discuss concurrently without losing or duplicating messages', async () => {
     const ROUNDS = 5;
     const roles = ['backend', 'frontend', 'app'] as const;
