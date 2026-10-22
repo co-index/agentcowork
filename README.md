@@ -59,4 +59,4 @@ claude mcp add --transport http agentcowork http://<hub>:7420/mcp \
 
 ## License
 
-MIT（计划）
+[MIT](LICENSE)
