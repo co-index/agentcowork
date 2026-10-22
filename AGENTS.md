@@ -8,8 +8,9 @@ AgentCowork：AI agent 协同工作空间（Agent + Cowork），每个角色带�
 
 ## 当前状态
 
-- M0 骨架、M1 讨论核心的代码已完成（`packages/server`），M1 验收（真实客户端实测、`docs/05-client-compat.md`、nginx 长连接）尚未进行
-- 下一步：完成 M1 验收，然后做 M2
+- M0、M1、M2 的代码已完成：`packages/server`（Hub）、`packages/web`（Web v0）、`skill/`（agent 行为规范）
+- 尚未进行：M1、M2 的验收（真实客户端实测、`docs/05-client-compat.md`、nginx 长连接、完整需求走到 done）
+- 下一步：完成验收，然后做 M3（Server 模式）
 - 常用命令：`pnpm test`、`pnpm typecheck`（TS 7，代替 ESLint）、`pnpm lint`（Prettier）、`pnpm host`
 
 ## 必读文档（开始任何工作前）

@@ -63,6 +63,7 @@ async function runHost(overrides: { port?: number; bind?: string; dbPath?: strin
       token: auth.token,
       publicUrl: config.publicUrl,
       dbPath: config.dbPath,
+      hasWeb: config.webRoot !== undefined,
     }) + '\n',
   );
 

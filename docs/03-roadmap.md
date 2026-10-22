@@ -34,7 +34,7 @@
 - [x] 防注入：给消息加边界包装，`room_join` 返回 rules
 - [x] 脱敏：识别常见密钥格式
 - [x] `skill/`：Claude Code Skill 和通用提示词模板（根据 04-agent-skill.md 定稿），自动收集 git 信息
-- [ ] Web v0：房间列表、房间页（Thread 加 Board 只读）、人类发言
+- [x] Web v0：房间列表、房间页（Thread 加 Board 只读）、人类发言
 
 **验收：** 用一个真实需求从 `briefing` 走到 `done`，Board 中产出可用的 `contract` 和 `plan.frontend`、`plan.backend`。
 

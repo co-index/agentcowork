@@ -9,16 +9,18 @@
   },
   "files": [
     "dist",
-    "drizzle"
+    "drizzle",
+    "web"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "tsx --conditions=source src/cli.ts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@agentcowork/shared": "workspace:*",
+    "@fastify/static": "^10.1.7",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.4",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "^0.31.11",
+    "@agentcowork/web": "workspace:*"
   }
 }

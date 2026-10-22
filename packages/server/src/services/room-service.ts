@@ -34,16 +34,18 @@ export class RoomService {
   async list(input: RoomListInput = {}): Promise<{ rooms: RoomSummaryView[] }> {
     const rooms = await this.repo.listRooms(input.status ?? ['open', 'paused']);
     const out: RoomSummaryView[] = [];
-    for (const room of rooms) {
-      const members = await this.repo.listParticipants(room.id);
-      out.push({
-        ...toRoomView(room, members),
-        member_count: members.filter((m) => m.status !== 'left').length,
-        last_message_at: room.lastMessageAt ? new Date(room.lastMessageAt).toISOString() : null,
-        created_at: new Date(room.createdAt).toISOString(),
-      });
-    }
+    for (const room of rooms) out.push(await this.summarize(room));
     return { rooms: out };
+  }
+
+  async summarize(room: Room): Promise<RoomSummaryView> {
+    const members = await this.repo.listParticipants(room.id);
+    return {
+      ...toRoomView(room, members),
+      member_count: members.filter((m) => m.status !== 'left').length,
+      last_message_at: room.lastMessageAt ? new Date(room.lastMessageAt).toISOString() : null,
+      created_at: new Date(room.createdAt).toISOString(),
+    };
   }
 
   /** Creates a room; the creator joins immediately and becomes its host. */

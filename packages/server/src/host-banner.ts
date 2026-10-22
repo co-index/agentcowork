@@ -16,10 +16,11 @@ export interface BannerInput {
   token: string;
   publicUrl?: string;
   dbPath: string;
+  hasWeb?: boolean;
 }
 
 /** Text printed by `agentcowork host`: addresses, invite token and ready-to-paste client config. */
-export function hostBanner({ port, bind, token, publicUrl, dbPath }: BannerInput): string {
+export function hostBanner({ port, bind, token, publicUrl, dbPath, hasWeb }: BannerInput): string {
   const local = `http://127.0.0.1:${port}`;
   const lan = bind === '127.0.0.1' || bind === 'localhost' ? [] : lanAddresses();
   const shareBase = publicUrl ?? (lan[0] ? `http://${lan[0]}:${port}` : local);
@@ -31,6 +32,9 @@ export function hostBanner({ port, bind, token, publicUrl, dbPath }: BannerInput
     ...lan.map((ip) => `  LAN:     http://${ip}:${port}`),
     `  Invite token: ${token}   (share with teammates; valid until this process exits)`,
     `  Database: ${dbPath}`,
+    ...(hasWeb
+      ? [`  Web UI:  ${shareBase.replace(/\/$/, '')}/#token=${token}`]
+      : ['  Web UI:  not built (run `pnpm build` in the repository)']),
     '',
     'Add to Claude Code:',
     `  claude mcp add --transport http agentcowork ${mcpUrl} \\`,

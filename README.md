@@ -13,7 +13,7 @@
 
 ## 状态
 
-🚧 M1（讨论核心，Host 模式）代码已完成，等待真实客户端验收（见 [docs/03-roadmap.md](docs/03-roadmap.md)）。
+🚧 M1（讨论核心）和 M2（结论板、阶段机、防注入、Skill、Web v0）代码已完成，等待真实客户端验收（见 [docs/03-roadmap.md](docs/03-roadmap.md)）。Agent 行为规范见 [skill/](skill/)。
 
 ## 开发
 
@@ -21,7 +21,7 @@
 
 ```bash
 pnpm install
-pnpm host          # 从源码启动 Host 模式（等同于 agentcowork host）
+pnpm build && pnpm host   # 启动 Host 模式；输出中的 Web UI 链接可直接打开
 pnpm test          # Vitest：单元测试 + MCP 端到端测试
 pnpm typecheck     # TypeScript 7 strict
 pnpm lint          # Prettier 格式检查

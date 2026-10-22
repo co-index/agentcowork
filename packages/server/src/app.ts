@@ -70,7 +70,7 @@ export interface Hub {
 
 export function createHub(config: Config, auth: AuthProvider): Hub {
   const services = createServices(config);
-  const http = buildHttpServer(services, auth);
+  const http = buildHttpServer(services, auth, { webRoot: config.webRoot });
   const janitor = setInterval(() => {
     services.stages.pauseIdleRooms().catch((err) => console.error('[janitor]', err));
   }, 60_000);

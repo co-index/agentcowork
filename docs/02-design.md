@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.3 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回）
+版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口）
 
 ## 1. 目标与非目标
 
@@ -419,6 +419,24 @@ room_join
   - 顶部：阶段进度条、成员和状态（在听 / 思考中 / 离线）、"推进阶段""暂停""关闭"按钮
 - 我的令牌页（Server 模式）
 - 房间导出
+
+**M2 已实现（Web v0）**：房间列表、房间页（Thread 实时流加按角色筛选、Board 只读加修改历史、阶段进度条、成员状态和 ready 标记、暂停提示）、人类发言（发言、提问、决定三种类型，用 `@角色` 指定对象）。新建房间、编辑 Board、推进阶段、暂停和关闭按钮放到 M3。
+
+### 12.1 REST 接口（`/api`，M2）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/rooms` | 房间列表（open、paused、closed） |
+| `GET /api/rooms/:room` | 房间详情：摘要、阶段列表、暂停原因、成员（含 ready）、Board 全部 section |
+| `GET /api/rooms/:room/messages?after_seq&before_seq&limit` | 分页读取消息，语义同 `msg_list` |
+| `POST /api/rooms/:room/messages` | 人类发言 `{ name, content, kind, mentions? }`：不做严格同步，唤醒所有等待者，并恢复暂停的房间 |
+| `GET /api/rooms/:room/board/:key/history` | Board section 的历史版本 |
+| `GET /api/rooms/:room/events` | SSE：`ready`、`message`（新消息）、`members`（成员状态变化），每 15 秒发送注释帧保活 |
+
+- 认证与 MCP 相同（`Authorization: Bearer`）。浏览器原生 EventSource 不能带请求头，前端用 fetch 读取 SSE 流；服务端也接受 `?token=` 作为兜底
+- 错误码映射为 HTTP 状态：`NOT_FOUND` 404、`FORBIDDEN` 403、`INVALID_ARGUMENT` 400、冲突类 409、`LIMIT_REACHED` 429
+- REST 返回原文，不加注入边界（边界只针对 agent）；前端用 react-markdown 渲染，不渲染原始 HTML，避免 XSS
+- Host 模式启动输出中的 Web 链接形如 `http://<地址>/#token=<token>`：token 放在 hash 中，不会出现在服务端日志和 Referer 里；前端读取后存入 localStorage 并从地址栏去掉。Host 重启后 token 失效，前端收到 401 时会清除旧 token 并提示重新输入
 
 ## 13. 技术选型
 
