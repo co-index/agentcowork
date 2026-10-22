@@ -23,8 +23,8 @@
 
 **验收：**
 1. 开两个 worktree，各起一个 Claude Code，加入同一个房间，针对一个真实的小需求连续讨论 10 轮以上，中途不需要人手动"戳"它们
-2. 实测并记录各客户端的工具调用超时：Claude Code、Codex 必测，Cursor、Gemini CLI 尽量测。把结论写进 `docs/05-client-compat.md`
-3. 在 nginx 反向代理后面，长时间等待不被切断
+2. 实测并记录各客户端的工具调用超时：Claude Code、Codex 必测，Cursor、Gemini CLI 尽量测。把结论写进 `docs/05-client-compat.md`（文档和记录表格已建好，客户端部分待测）
+3. ✅ 在 nginx 反向代理后面，长时间等待不被切断（2026-10-22 实测，见 `docs/05-client-compat.md`；同时加入了 SSE 可续传）
 
 ## M2 · 结论板、阶段与行为规范
 

@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Services } from '../../app.js';
 import type { Principal } from '../../domain/models.js';
 import type { AuthProvider } from '../../services/ports.js';
+import { BoundedEventStore } from './event-store.js';
 import { createMcpServer } from './tools.js';
 
 const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -97,6 +98,8 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
     const participants = new Set<string>();
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      // Lets clients resume a response stream cut by a proxy (Last-Event-ID).
+      eventStore: new BoundedEventStore(),
       onsessioninitialized: (id) => {
         sessions.set(id, session);
       },

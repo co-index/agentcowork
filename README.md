@@ -35,7 +35,8 @@ pnpm build
 | [docs/01-research.md](docs/01-research.md) | 市场调研：现有产品对比、AgentChatBus 源码分析 |
 | [docs/02-design.md](docs/02-design.md) | **完整设计**：架构、部署模式、数据模型、MCP 工具、讨论协议、安全 |
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 开发路线与里程碑、验收标准 |
-| [docs/04-agent-skill.md](docs/04-agent-skill.md) | 接入房间的 agent 行为规范（Skill 草案） |
+| [docs/04-agent-skill.md](docs/04-agent-skill.md) | 接入房间的 agent 行为规范（定稿见 [skill/](skill/)） |
+| [docs/05-client-compat.md](docs/05-client-compat.md) | 客户端与反向代理兼容性实测 |
 
 ## 快速预览（规划中）
 

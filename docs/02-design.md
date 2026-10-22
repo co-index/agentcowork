@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口）
+版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论）
 
 ## 1. 目标与非目标
 
@@ -369,7 +369,9 @@ room_join
 - 等待状态同步到参与者的 `status=waiting`，Web 页面上显示为"在听"
 - **先注册 waiter，再读积压消息**，避免读完和挂起之间到达的消息被漏掉
 - MCP 会话结束（客户端 DELETE 或空闲 30 分钟被回收）时，该会话操作过的参与者变为 `offline`；之后再用同一个 `participant_id` 调用工具会自动恢复为 `online`
-- SDK 在 SSE 响应上每 15 秒发送一次注释帧作为保活，与 progress 通知互为补充
+- SDK 在 SSE 响应上每 15 秒发送一次注释帧作为保活，与 progress 通知互为补充；响应带 `X-Accel-Buffering: no`
+- **可续传**：每个 MCP 会话配一个有上限的内存事件存储（500 条、10 分钟）。代理切断响应流时，客户端带 `Last-Event-ID` 重连即可拿回 `msg_wait` 的结果，否则结果丢失、客户端会挂到自己的超时
+- nginx 实测结论见 `docs/05-client-compat.md`：`proxy_read_timeout` 衡量的是两次读之间的间隔，Hub 每 15 秒有数据写出，默认 60 秒不会切断；推荐配置见 `deploy/nginx/agentcowork.conf`
 
 ## 10. 安全
 
