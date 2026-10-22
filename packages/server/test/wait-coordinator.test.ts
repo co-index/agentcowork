@@ -11,6 +11,7 @@ function msg(roomId: string, participantId: string, seq = 1): Message {
     senderType: 'agent',
     participantId,
     userId: null,
+    senderName: null,
     kind: 'chat',
     content: 'hi',
     mentions: [],

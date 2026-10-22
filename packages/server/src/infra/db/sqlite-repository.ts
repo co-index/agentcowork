@@ -2,11 +2,18 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { AppError } from '../../domain/errors.js';
-import type { Message, NewMessage, Participant, ReplyToken, Room } from '../../domain/models.js';
+import type {
+  BoardSection,
+  Message,
+  NewMessage,
+  Participant,
+  ReplyToken,
+  Room,
+} from '../../domain/models.js';
 import type { Repository } from '../../services/ports.js';
 import * as schema from './schema.js';
 
@@ -56,6 +63,16 @@ export class SqliteRepository implements Repository {
     this.db.update(schema.rooms).set(patch).where(eq(schema.rooms.id, id)).run();
   }
 
+  async listRooms(statuses: Room['status'][]): Promise<Room[]> {
+    const rows = this.db
+      .select()
+      .from(schema.rooms)
+      .where(inArray(schema.rooms.status, statuses))
+      .orderBy(desc(schema.rooms.lastMessageAt))
+      .all();
+    return rows as Room[];
+  }
+
   async createParticipant(participant: Participant): Promise<void> {
     this.db.insert(schema.participants).values(participant).run();
   }
@@ -92,12 +109,46 @@ export class SqliteRepository implements Repository {
       const seq = this.maxSeq(tx, message.roomId) + 1;
       const row = { ...message, seq };
       tx.insert(schema.messages).values(row).run();
+      tx.update(schema.rooms)
+        .set({ lastMessageAt: message.createdAt })
+        .where(eq(schema.rooms.id, message.roomId))
+        .run();
       return row;
     });
   }
 
   async currentSeq(roomId: string): Promise<number> {
     return this.maxSeq(this.db, roomId);
+  }
+
+  async countAgentMessages(roomId: string, afterSeq: number, participantId?: string) {
+    const conds = [
+      eq(schema.messages.roomId, roomId),
+      gt(schema.messages.seq, afterSeq),
+      eq(schema.messages.senderType, 'agent'),
+    ];
+    if (participantId) conds.push(eq(schema.messages.participantId, participantId));
+    const row = this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(schema.messages)
+      .where(and(...conds))
+      .get();
+    return row?.n ?? 0;
+  }
+
+  async readyParticipants(roomId: string, afterSeq: number): Promise<Set<string>> {
+    const rows = this.db
+      .selectDistinct({ id: schema.messages.participantId })
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.roomId, roomId),
+          gt(schema.messages.seq, afterSeq),
+          eq(schema.messages.ready, true),
+        ),
+      )
+      .all();
+    return new Set(rows.flatMap((r) => (r.id ? [r.id] : [])));
   }
 
   async listMessages(
@@ -116,6 +167,62 @@ export class SqliteRepository implements Repository {
       .limit(query.limit)
       .all() as Message[];
     return newestFirst ? rows.reverse() : rows;
+  }
+
+  async listBoard(roomId: string, keys?: string[]): Promise<BoardSection[]> {
+    const conds = [eq(schema.boardSections.roomId, roomId)];
+    if (keys?.length) conds.push(inArray(schema.boardSections.key, keys));
+    return this.db
+      .select()
+      .from(schema.boardSections)
+      .where(and(...conds))
+      .orderBy(schema.boardSections.key)
+      .all();
+  }
+
+  async writeBoardSection(
+    section: Omit<BoardSection, 'version'>,
+    baseVersion: number,
+  ): Promise<
+    { ok: true; section: BoardSection } | { ok: false; current: BoardSection | undefined }
+  > {
+    return this.db.transaction((tx) => {
+      const current = tx
+        .select()
+        .from(schema.boardSections)
+        .where(
+          and(
+            eq(schema.boardSections.roomId, section.roomId),
+            eq(schema.boardSections.key, section.key),
+          ),
+        )
+        .get();
+      if ((current?.version ?? 0) !== baseVersion) return { ok: false as const, current };
+      const row: BoardSection = { ...section, version: baseVersion + 1 };
+      tx.insert(schema.boardSections)
+        .values(row)
+        .onConflictDoUpdate({
+          target: [schema.boardSections.roomId, schema.boardSections.key],
+          set: {
+            content: row.content,
+            version: row.version,
+            updatedBy: row.updatedBy,
+            updatedAt: row.updatedAt,
+          },
+        })
+        .run();
+      tx.insert(schema.boardHistory).values(row).run();
+      return { ok: true as const, section: row };
+    });
+  }
+
+  async listBoardHistory(roomId: string, key: string): Promise<BoardSection[]> {
+    return this.db
+      .select()
+      .from(schema.boardHistory)
+      .where(and(eq(schema.boardHistory.roomId, roomId), eq(schema.boardHistory.key, key)))
+      .orderBy(desc(schema.boardHistory.version))
+      .all();
   }
 
   async insertReplyToken(token: ReplyToken): Promise<void> {

@@ -1,7 +1,7 @@
 import type { ClientInfo, Evidence, RepoInfo } from '@agentcowork/shared';
 import { index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 
-// Board tables (board_sections, board_history) arrive in M2; users / access_tokens / room_members in M3.
+// users / access_tokens / room_members arrive in M3.
 
 export const rooms = sqliteTable('rooms', {
   id: text('id').primaryKey(),
@@ -13,6 +13,11 @@ export const rooms = sqliteTable('rooms', {
   hostParticipantId: text('host_participant_id'),
   createdBy: text('created_by').notNull(),
   settings: text('settings', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  /** Last seq before the current stage began; per-stage limits and ready count after it. */
+  stageStartedSeq: integer('stage_started_seq').notNull().default(0),
+  /** Last seq before the message budget was (re)started; reset when a human resumes the room. */
+  budgetStartSeq: integer('budget_start_seq').notNull().default(0),
+  lastMessageAt: integer('last_message_at').notNull().default(0),
   createdAt: integer('created_at').notNull(),
   closedAt: integer('closed_at'),
 });
@@ -49,6 +54,8 @@ export const messages = sqliteTable(
     senderType: text('sender_type').notNull(),
     participantId: text('participant_id'),
     userId: text('user_id'),
+    /** Display name for human senders (agents are resolved through participant_id). */
+    senderName: text('sender_name'),
     kind: text('kind').notNull(),
     content: text('content').notNull(),
     mentions: text('mentions', { mode: 'json' }).$type<string[]>().notNull(),
@@ -71,4 +78,32 @@ export const replyTokens = sqliteTable(
     consumedAt: integer('consumed_at'),
   },
   (t) => [primaryKey({ columns: [t.tokenHash] }), index('reply_tokens_expiry_idx').on(t.expiresAt)],
+);
+
+export const boardSections = sqliteTable(
+  'board_sections',
+  {
+    roomId: text('room_id')
+      .notNull()
+      .references(() => rooms.id),
+    key: text('key').notNull(),
+    content: text('content').notNull(),
+    version: integer('version').notNull(),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roomId, t.key] })],
+);
+
+export const boardHistory = sqliteTable(
+  'board_history',
+  {
+    roomId: text('room_id').notNull(),
+    key: text('key').notNull(),
+    version: integer('version').notNull(),
+    content: text('content').notNull(),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roomId, t.key, t.version] })],
 );

@@ -8,6 +8,13 @@
       "when": 1792664849094,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792665646233,
+      "tag": "0001_m2_board_stages",
+      "breakpoints": true
     }
   ]
 }

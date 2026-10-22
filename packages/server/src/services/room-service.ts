@@ -4,9 +4,13 @@ import {
   type RoomCreateInput,
   type RoomJoinInput,
   type RoomLeaveInput,
+  type RoomListInput,
+  type RoomSummaryView,
 } from '@agentcowork/shared';
 import { AppError } from '../domain/errors.js';
 import type { Participant, Principal, Room } from '../domain/models.js';
+import type { Access } from './access.js';
+import type { BoardService } from './board-service.js';
 import { newId, randomToken } from './ids.js';
 import type { Clock, EventBus, Repository } from './ports.js';
 import type { ReplyTokens } from './reply-tokens.js';
@@ -16,19 +20,31 @@ import { nameIndex, toMemberView, toMessageView, toRoomView } from './views.js';
 
 const RECENT_MESSAGES = 30;
 
-export interface ParticipantContext {
-  room: Room;
-  participant: Participant;
-}
-
 export class RoomService {
   constructor(
     private readonly repo: Repository,
     private readonly bus: EventBus,
+    private readonly access: Access,
     private readonly thread: Thread,
     private readonly tokens: ReplyTokens,
+    private readonly board: BoardService,
     private readonly clock: Clock,
   ) {}
+
+  async list(input: RoomListInput = {}): Promise<{ rooms: RoomSummaryView[] }> {
+    const rooms = await this.repo.listRooms(input.status ?? ['open', 'paused']);
+    const out: RoomSummaryView[] = [];
+    for (const room of rooms) {
+      const members = await this.repo.listParticipants(room.id);
+      out.push({
+        ...toRoomView(room, members),
+        member_count: members.filter((m) => m.status !== 'left').length,
+        last_message_at: room.lastMessageAt ? new Date(room.lastMessageAt).toISOString() : null,
+        created_at: new Date(room.createdAt).toISOString(),
+      });
+    }
+    return { rooms: out };
+  }
 
   /** Creates a room; the creator joins immediately and becomes its host. */
   async create(principal: Principal, input: RoomCreateInput): Promise<JoinResult> {
@@ -42,6 +58,9 @@ export class RoomService {
       hostParticipantId: null,
       createdBy: principal.userId,
       settings: {},
+      stageStartedSeq: 0,
+      budgetStartSeq: 0,
+      lastMessageAt: this.clock.now(),
       createdAt: this.clock.now(),
       closedAt: null,
     };
@@ -60,11 +79,22 @@ export class RoomService {
       `Room "${room.title}" created by ${participant.displayName} (host).`,
     );
     if (input.requirement?.trim()) {
+      await this.board.update(
+        { kind: 'agent', principal, participant },
+        room.id,
+        {
+          key: room.type === 'bug' ? 'bug.symptom' : 'requirement',
+          content: input.requirement,
+          base_version: 0,
+        },
+        { announce: false },
+      );
       await this.thread.append({
         roomId: room.id,
         senderType: 'agent',
         participantId: participant.id,
         userId: principal.userId,
+        senderName: null,
         kind: 'chat',
         content: `## ${room.type === 'bug' ? 'Bug report' : 'Requirement'}\n\n${input.requirement}`,
         mentions: [],
@@ -77,7 +107,10 @@ export class RoomService {
   }
 
   async join(principal: Principal, input: RoomJoinInput): Promise<JoinResult> {
-    const room = await this.requireOpenRoom(input.room);
+    const room = await this.access.requireRoom(input.room);
+    if (room.status === 'closed' || room.status === 'archived') {
+      throw new AppError('ROOM_CLOSED', `Room "${input.room}" is ${room.status}`);
+    }
     const participant = await this.addParticipant(principal, room, input);
     await this.thread.system(
       room.id,
@@ -89,7 +122,7 @@ export class RoomService {
   }
 
   async leave(principal: Principal, input: RoomLeaveInput): Promise<{ ok: true }> {
-    const { room, participant } = await this.requireParticipant(
+    const { room, participant } = await this.access.requireParticipant(
       principal,
       input.room,
       input.participant_id,
@@ -111,68 +144,6 @@ export class RoomService {
       `${participant.displayName} left.` + (input.summary ? `\n\nSummary:\n${input.summary}` : ''),
     );
     return { ok: true };
-  }
-
-  async requireRoom(ref: string): Promise<Room> {
-    const room = await this.repo.findRoom(ref);
-    if (!room) throw new AppError('NOT_FOUND', `Room "${ref}" not found`);
-    return room;
-  }
-
-  async requireOpenRoom(ref: string): Promise<Room> {
-    const room = await this.requireRoom(ref);
-    if (room.status !== 'open')
-      throw new AppError('ROOM_CLOSED', `Room "${ref}" is ${room.status}`);
-    return room;
-  }
-
-  /** Resolves an active participant owned by the caller, and marks it as seen. */
-  async requireParticipant(
-    principal: Principal,
-    roomRef: string,
-    participantId: string,
-  ): Promise<ParticipantContext> {
-    const room = await this.requireRoom(roomRef);
-    const participant = await this.repo.findParticipant(participantId);
-    if (!participant || participant.roomId !== room.id || participant.status === 'left') {
-      throw new AppError(
-        'NOT_A_PARTICIPANT',
-        `"${participantId}" is not an active participant of room "${roomRef}"; call room_join first`,
-      );
-    }
-    if (participant.userId !== principal.userId) {
-      throw new AppError('FORBIDDEN', 'This participant belongs to another user');
-    }
-    await this.setStatus(
-      participant,
-      participant.status === 'offline' ? 'online' : participant.status,
-    );
-    return { room, participant };
-  }
-
-  async setStatus(participant: Participant, status: Participant['status']): Promise<void> {
-    const changed = participant.status !== status;
-    participant.status = status;
-    participant.lastSeenAt = this.clock.now();
-    await this.repo.updateParticipant(participant.id, {
-      status,
-      lastSeenAt: participant.lastSeenAt,
-    });
-    if (changed) {
-      this.bus.publish({
-        type: 'participant.updated',
-        roomId: participant.roomId,
-        participantId: participant.id,
-      });
-    }
-  }
-
-  /** Called when the MCP session that drove these participants goes away. */
-  async markOffline(participantIds: Iterable<string>): Promise<void> {
-    for (const id of participantIds) {
-      const p = await this.repo.findParticipant(id);
-      if (p && p.status !== 'left') await this.setStatus(p, 'offline');
-    }
   }
 
   private async addParticipant(
@@ -214,6 +185,7 @@ export class RoomService {
       participant_id: participant.id,
       room: toRoomView(room, members),
       members: members.filter((m) => m.status !== 'left').map(toMemberView),
+      board_summary: await this.board.summary(room.id),
       recent_messages: recent.map((m) => toMessageView(m, names)),
       sync: await this.tokens.issue(participant, currentSeq),
       rules: ROOM_RULES,

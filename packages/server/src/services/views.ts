@@ -7,7 +7,7 @@ export function toMessageView(message: Message, names: Map<string, string>): Mes
       ? 'system'
       : message.participantId
         ? (names.get(message.participantId) ?? message.participantId)
-        : (message.userId ?? message.senderType);
+        : (message.senderName ?? message.senderType);
   return {
     seq: message.seq,
     sender_type: message.senderType,

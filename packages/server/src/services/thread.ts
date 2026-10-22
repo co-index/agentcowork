@@ -1,4 +1,4 @@
-import type { Message, NewMessage } from '../domain/models.js';
+import { BROADCAST, type Message, type NewMessage } from '../domain/models.js';
 import { newId } from './ids.js';
 import { KeyedMutex } from './keyed-mutex.js';
 import type { Clock, EventBus, Repository } from './ports.js';
@@ -37,15 +37,22 @@ export class Thread {
     return this.lock(entry.roomId, () => this.appendLocked(entry));
   }
 
-  system(roomId: string, content: string): Promise<Message> {
-    return this.append({
+  /** Hub-authored message. `broadcast` mentions "@all" so it also wakes only_when_mentioned waiters. */
+  system(roomId: string, content: string, opts: { broadcast?: boolean } = {}): Promise<Message> {
+    return this.lock(roomId, () => this.systemLocked(roomId, content, opts));
+  }
+
+  /** Caller must hold the room lock. */
+  systemLocked(roomId: string, content: string, opts: { broadcast?: boolean } = {}) {
+    return this.appendLocked({
       roomId,
       senderType: 'system',
       participantId: null,
       userId: null,
+      senderName: null,
       kind: 'system',
       content,
-      mentions: [],
+      mentions: opts.broadcast ? [BROADCAST] : [],
       replyToSeq: null,
       evidence: [],
       ready: false,

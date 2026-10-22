@@ -59,11 +59,22 @@ describe('MCP endpoint', () => {
     await expect(connect('acw_host_wrong')).rejects.toThrow();
   });
 
-  it('lists the M1 tools', async () => {
+  it('lists the ten tools from the design', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ['msg_list', 'msg_post', 'msg_wait', 'room_create', 'room_join', 'room_leave'].sort(),
+      [
+        'board_get',
+        'board_update',
+        'msg_list',
+        'msg_post',
+        'msg_wait',
+        'room_create',
+        'room_join',
+        'room_leave',
+        'room_list',
+        'stage_set',
+      ].sort(),
     );
     await client.close();
   });

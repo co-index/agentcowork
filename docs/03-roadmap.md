@@ -28,11 +28,11 @@
 
 ## M2 · 结论板、阶段与行为规范
 
-- [ ] Board：`board_get`、`board_update`（乐观锁）、board_history
-- [ ] 阶段机：`stage_set`、`ready` 统计、发言上限、房间总消息上限、空闲暂停
-- [ ] `room_list`
-- [ ] 防注入：给消息加边界包装，`room_join` 返回 rules
-- [ ] 脱敏：识别常见密钥格式
+- [x] Board：`board_get`、`board_update`（乐观锁）、board_history
+- [x] 阶段机：`stage_set`、`ready` 统计、发言上限、房间总消息上限、空闲暂停
+- [x] `room_list`
+- [x] 防注入：给消息加边界包装，`room_join` 返回 rules
+- [x] 脱敏：识别常见密钥格式
 - [ ] `skill/`：Claude Code Skill 和通用提示词模板（根据 04-agent-skill.md 定稿），自动收集 git 信息
 - [ ] Web v0：房间列表、房间页（Thread 加 Board 只读）、人类发言
 

@@ -72,9 +72,9 @@ describe('RoomService', () => {
 
   it('markOffline flips status, and the next call brings the participant back online', async () => {
     const { guest } = await roomWithTwo(s);
-    await s.rooms.markOffline([guest.participant_id]);
+    await s.access.markOffline([guest.participant_id]);
     expect((await s.repo.findParticipant(guest.participant_id))?.status).toBe('offline');
-    await s.rooms.requireParticipant(bob, 'REQ-1', guest.participant_id);
+    await s.access.requireParticipant(bob, 'REQ-1', guest.participant_id);
     expect((await s.repo.findParticipant(guest.participant_id))?.status).toBe('online');
   });
 });

@@ -23,6 +23,9 @@ export interface Room {
   hostParticipantId: string | null;
   createdBy: string;
   settings: Record<string, unknown>;
+  stageStartedSeq: number;
+  budgetStartSeq: number;
+  lastMessageAt: number;
   createdAt: number;
   closedAt: number | null;
 }
@@ -49,6 +52,7 @@ export interface Message {
   senderType: SenderType;
   participantId: string | null;
   userId: string | null;
+  senderName: string | null;
   kind: MessageKind;
   content: string;
   mentions: string[];
@@ -59,6 +63,16 @@ export interface Message {
 }
 
 export type NewMessage = Omit<Message, 'seq'>;
+
+export interface BoardSection {
+  roomId: string;
+  key: string;
+  content: string;
+  version: number;
+  /** participant_id of an agent, or "human:<name>". */
+  updatedBy: string;
+  updatedAt: number;
+}
 
 export interface ReplyToken {
   tokenHash: string;
@@ -76,7 +90,25 @@ export interface Principal {
   scope: 'host' | 'personal';
 }
 
-/** True if `message` mentions the participant directly or by role. */
+/** Mention that addresses every participant. */
+export const BROADCAST = '@all';
+
+/** True if `message` mentions the participant directly, by role, or via "@all". */
 export function mentions(message: Message, participant: Participant): boolean {
-  return message.mentions.includes(participant.id) || message.mentions.includes(participant.role);
+  return message.mentions.some(
+    (m) => m === participant.id || m === participant.role || m === BROADCAST,
+  );
+}
+
+/** Who performs a write: an agent through its participant, or a human through the Web UI. */
+export type Actor =
+  | { kind: 'agent'; principal: Principal; participant: Participant }
+  | { kind: 'human'; principal: Principal; name: string };
+
+export function actorLabel(actor: Actor): string {
+  return actor.kind === 'agent' ? actor.participant.displayName : `${actor.name} (human)`;
+}
+
+export function actorRef(actor: Actor): string {
+  return actor.kind === 'agent' ? actor.participant.id : `human:${actor.name}`;
 }

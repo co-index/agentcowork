@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { PostableKindSchema, RoleSchema, RoomTypeSchema } from './enums.js';
+import {
+  PostableKindSchema,
+  RoleSchema,
+  RoomStatusSchema,
+  RoomTypeSchema,
+  StageSchema,
+} from './enums.js';
 
 export const LIMITS = {
   slugMax: 64,
@@ -7,6 +13,8 @@ export const LIMITS = {
   displayNameMax: 64,
   contentMax: 20_000,
   requirementMax: 50_000,
+  boardContentMax: 50_000,
+  boardKeyMax: 64,
   mentionsMax: 20,
   evidenceMax: 20,
   listMax: 200,
@@ -114,3 +122,53 @@ export const MsgListInput = z.object({
   limit: z.number().int().min(1).max(LIMITS.listMax).optional(),
 });
 export type MsgListInput = z.infer<typeof MsgListInput>;
+
+export const RoomListInput = z.object({
+  status: z.array(RoomStatusSchema).optional().describe('Defaults to ["open", "paused"]'),
+});
+export type RoomListInput = z.infer<typeof RoomListInput>;
+
+export const BoardKeySchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.boardKeyMax)
+  .regex(
+    /^[a-z][a-z0-9_]*(\.[a-z0-9_:-]+)*$/,
+    'board keys look like "contract", "plan.frontend", "context.custom:data", "bug.root_cause"',
+  );
+
+export const BoardGetInput = z.object({
+  room: z.string().min(1).describe('Room slug or id'),
+  keys: z.array(BoardKeySchema).max(50).optional().describe('Sections to read; all if omitted'),
+});
+export type BoardGetInput = z.infer<typeof BoardGetInput>;
+
+export const BoardUpdateInput = z.object({
+  ...ParticipantRef,
+  key: BoardKeySchema,
+  content: z
+    .string()
+    .max(LIMITS.boardContentMax)
+    .describe('Full new content (markdown), not a diff'),
+  base_version: z
+    .number()
+    .int()
+    .min(0)
+    .describe('Version you based the edit on; 0 when creating the section'),
+});
+export type BoardUpdateInput = z.infer<typeof BoardUpdateInput>;
+
+export const StageSetInput = z.object({
+  ...ParticipantRef,
+  stage: StageSchema,
+});
+export type StageSetInput = z.infer<typeof StageSetInput>;
+
+/** Human message from the Web UI (no strict sync: humans always get the floor). */
+export const HumanPostInput = z.object({
+  name: z.string().min(1).max(LIMITS.displayNameMax),
+  content: z.string().min(1).max(LIMITS.contentMax),
+  kind: PostableKindSchema.default('chat'),
+  mentions: z.array(z.string().min(1).max(64)).max(LIMITS.mentionsMax).optional(),
+});
+export type HumanPostInput = z.infer<typeof HumanPostInput>;

@@ -71,7 +71,7 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
     const session = sessions.get(id);
     if (!session) return;
     sessions.delete(id);
-    void services.rooms.markOffline(session.participants).catch(() => undefined);
+    void services.access.markOffline(session.participants).catch(() => undefined);
   };
 
   app.post('/mcp', async (req, reply) => {

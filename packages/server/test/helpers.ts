@@ -7,11 +7,14 @@ export const alice: Principal = { userId: 'u_alice', name: 'alice', scope: 'pers
 export const bob: Principal = { userId: 'u_bob', name: 'bob', scope: 'personal' };
 export const carol: Principal = { userId: 'u_carol', name: 'carol', scope: 'personal' };
 
-export function makeServices(opts: { waitMaxSeconds?: number; heartbeatSeconds?: number } = {}) {
+export function makeServices(
+  opts: { waitMaxSeconds?: number; heartbeatSeconds?: number; idlePauseMs?: number } = {},
+) {
   return createServices({
     dbPath: ':memory:',
     waitMaxSeconds: opts.waitMaxSeconds ?? 2,
     heartbeatSeconds: opts.heartbeatSeconds ?? 0,
+    idlePauseMs: opts.idlePauseMs,
   });
 }
 

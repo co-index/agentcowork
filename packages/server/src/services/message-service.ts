@@ -1,4 +1,5 @@
 import type {
+  HumanPostInput,
   ListResult,
   MessageView,
   MsgListInput,
@@ -10,17 +11,21 @@ import type {
 } from '@agentcowork/shared';
 import { AppError } from '../domain/errors.js';
 import {
+  BROADCAST,
   mentions,
   type Message,
   type Participant,
   type Principal,
   type Room,
 } from '../domain/models.js';
+import { redact } from '../security/redact.js';
 import type { Repository } from './ports.js';
 import type { ReplyTokens } from './reply-tokens.js';
-import type { RoomService } from './room-service.js';
+import type { Access } from './access.js';
+import { STAGE_GUIDANCE } from './rules.js';
+import type { StageService } from './stage-service.js';
 import type { Thread } from './thread.js';
-import { nameIndex, toMemberStatus, toMessageView } from './views.js';
+import { nameIndex, toMessageView } from './views.js';
 import type { WaitCoordinator } from './wait-coordinator.js';
 
 /** Max messages handed back by one msg_wait / conflict response; the rest come next call. */
@@ -42,7 +47,8 @@ interface Batch {
 export class MessageService {
   constructor(
     private readonly repo: Repository,
-    private readonly rooms: RoomService,
+    private readonly access: Access,
+    private readonly stages: StageService,
     private readonly thread: Thread,
     private readonly tokens: ReplyTokens,
     private readonly waits: WaitCoordinator,
@@ -54,7 +60,7 @@ export class MessageService {
     input: MsgWaitInput,
     opts: WaitOptions = {},
   ): Promise<WaitResult> {
-    const { room, participant } = await this.rooms.requireParticipant(
+    const { room, participant } = await this.access.requireParticipant(
       principal,
       input.room,
       input.participant_id,
@@ -77,8 +83,9 @@ export class MessageService {
     let batch = await this.readAfter(room.id, input.after_seq);
     let timedOut = false;
     try {
-      if (!batch.messages.some(wakes)) {
-        await this.rooms.setStatus(participant, 'waiting');
+      // A paused or closed room returns at once so agents stop polling it.
+      if (room.status === 'open' && !batch.messages.some(wakes)) {
+        await this.access.setStatus(participant, 'waiting');
         const outcome = await handle.promise;
         timedOut = outcome === 'timeout';
         batch = await this.readAfter(room.id, input.after_seq);
@@ -86,7 +93,7 @@ export class MessageService {
     } finally {
       handle.cancel();
       const fresh = await this.repo.findParticipant(participant.id);
-      if (fresh && fresh.status === 'waiting') await this.rooms.setStatus(fresh, 'online');
+      if (fresh && fresh.status === 'waiting') await this.access.setStatus(fresh, 'online');
     }
 
     const others = batch.messages.filter((m) => m.participantId !== participant.id);
@@ -99,23 +106,23 @@ export class MessageService {
       sync: await this.tokens.issue(participant, batch.seenSeq),
       stage: freshRoom.stage,
       room_status: freshRoom.status,
-      members_status: members.filter((m) => m.status !== 'left').map(toMemberStatus),
-      hint: this.hint(participant, others, batch, timedOut),
+      members_status: await this.stages.memberStatus(freshRoom, members),
+      hint: this.hint(freshRoom, participant, others, batch, timedOut),
     };
   }
 
   async post(principal: Principal, input: MsgPostInput): Promise<PostResult> {
-    const { room, participant } = await this.rooms.requireParticipant(
-      principal,
-      input.room,
-      input.participant_id,
-    );
-    if (room.status !== 'open') throw new AppError('ROOM_CLOSED', `Room is ${room.status}`);
-    if (input.kind === 'decision' && room.hostParticipantId !== participant.id) {
-      throw new AppError('FORBIDDEN', 'Only the host (or a human) may post kind=decision');
-    }
+    const ctx = await this.access.requireParticipant(principal, input.room, input.participant_id);
+    const { participant } = ctx;
 
-    return this.thread.lock(room.id, async () => {
+    return this.thread.lock(ctx.room.id, async () => {
+      const room = (await this.repo.findRoom(ctx.room.id)) ?? ctx.room;
+      if (input.kind === 'decision' && room.hostParticipantId !== participant.id) {
+        throw new AppError('FORBIDDEN', 'Only the host (or a human) may post kind=decision');
+      }
+      // Checked before redeeming, so a refused post does not burn the token.
+      await this.stages.assertCanSpeak(room, participant);
+
       const token = await this.tokens.redeem(participant, input.reply_token);
       const currentSeq = await this.repo.currentSeq(room.id);
       if (input.expected_last_seq > currentSeq) {
@@ -151,24 +158,63 @@ export class MessageService {
         );
       }
 
+      const { text, kinds } = redact(input.content);
       const message = await this.thread.appendLocked({
         roomId: room.id,
         senderType: 'agent',
         participantId: participant.id,
         userId: principal.userId,
+        senderName: null,
         kind: input.kind,
-        content: input.content,
+        content: text,
         mentions: input.mentions ?? [],
         replyToSeq: input.reply_to_seq ?? null,
         evidence: input.evidence ?? [],
         ready: input.ready ?? false,
       });
-      return { seq: message.seq, sync: await this.tokens.issue(participant, message.seq) };
+      await this.stages.afterAgentPost(room, message);
+      // Hub messages appended by afterAgentPost are new context: the next sync starts before them.
+      return {
+        seq: message.seq,
+        sync: await this.tokens.issue(participant, message.seq),
+        ...(kinds.length ? { redacted: kinds } : {}),
+      };
+    });
+  }
+
+  /** A human speaking from the Web UI: no strict sync, wakes everyone, lifts a pause. */
+  async postAsHuman(
+    principal: Principal,
+    roomRef: string,
+    input: HumanPostInput,
+  ): Promise<{ seq: number; redacted?: string[] }> {
+    const ref = await this.access.requireRoom(roomRef);
+    return this.thread.lock(ref.id, async () => {
+      const room = (await this.repo.findRoom(ref.id)) ?? ref;
+      if (room.status === 'closed' || room.status === 'archived') {
+        throw new AppError('ROOM_CLOSED', `Room is ${room.status}`);
+      }
+      await this.stages.resumeLocked(room);
+      const { text, kinds } = redact(input.content);
+      const message = await this.thread.appendLocked({
+        roomId: room.id,
+        senderType: 'human',
+        participantId: null,
+        userId: principal.userId,
+        senderName: input.name,
+        kind: input.kind,
+        content: text,
+        mentions: input.mentions ?? [],
+        replyToSeq: null,
+        evidence: [],
+        ready: false,
+      });
+      return { seq: message.seq, ...(kinds.length ? { redacted: kinds } : {}) };
     });
   }
 
   async list(input: MsgListInput): Promise<ListResult> {
-    const room = await this.rooms.requireRoom(input.room);
+    const room = await this.access.requireRoom(input.room);
     const limit = input.limit ?? 50;
     const rows = await this.repo.listMessages(room.id, {
       afterSeq: input.after_seq,
@@ -219,15 +265,28 @@ export class MessageService {
   }
 
   private hint(
+    room: Room,
     participant: Participant,
     others: Message[],
     batch: Batch,
     timedOut: boolean,
   ): string | undefined {
-    const mentioned = others.filter((m) => mentions(m, participant)).map((m) => m.seq);
+    if (room.status === 'paused') {
+      const reason = this.stages.pauseReason(room) ?? 'waiting for a human';
+      return `Room is paused (${reason}). Stop calling msg_wait and report to your local user.`;
+    }
+    if (room.status !== 'open')
+      return `Room is ${room.status}. Call room_leave and report to your user.`;
+    if (room.stage === 'done') return STAGE_GUIDANCE.done;
+    const mentioned = others
+      .filter((m) => m.senderType !== 'system' && mentions(m, participant))
+      .map((m) => m.seq);
     if (mentioned.length)
       return `You were mentioned in seq ${mentioned.join(', ')}; please answer.`;
     if (others.some((m) => m.senderType === 'human')) return 'A human spoke; read it carefully.';
+    if (others.some((m) => m.senderType === 'system' && m.mentions.includes(BROADCAST))) {
+      return `Stage is "${room.stage}". ${STAGE_GUIDANCE[room.stage]}`;
+    }
     if (batch.hasMore)
       return `More messages pending; call msg_wait again with after_seq=${batch.seenSeq}.`;
     if (timedOut && others.length === 0) {

@@ -44,6 +44,28 @@ export interface RoomView {
   host: { participant_id: string; display_name: string } | null;
 }
 
+export interface BoardSectionView {
+  key: string;
+  content: string;
+  version: number;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface RoomSummaryView extends RoomView {
+  member_count: number;
+  last_message_at: string | null;
+  created_at: string;
+}
+
+export type MemberStatusView = Pick<
+  MemberView,
+  'participant_id' | 'role' | 'display_name' | 'status'
+> & {
+  /** Posted ready=true during the current stage. */
+  ready: boolean;
+};
+
 export interface SyncContext {
   current_seq: number;
   reply_token: string;
@@ -53,6 +75,7 @@ export interface JoinResult {
   participant_id: string;
   room: RoomView;
   members: MemberView[];
+  board_summary: Record<string, { version: number; excerpt: string }>;
   recent_messages: MessageView[];
   sync: SyncContext;
   rules: string;
@@ -65,13 +88,21 @@ export interface WaitResult {
   sync: SyncContext;
   stage: Stage;
   room_status: RoomStatus;
-  members_status: Pick<MemberView, 'participant_id' | 'role' | 'display_name' | 'status'>[];
+  members_status: MemberStatusView[];
   hint?: string;
 }
 
 export interface PostResult {
   seq: number;
   sync: SyncContext;
+  /** Kinds of secrets that were masked before storing, if any. */
+  redacted?: string[];
+}
+
+export interface BoardUpdateResult {
+  key: string;
+  version: number;
+  redacted?: string[];
 }
 
 export interface ListResult {

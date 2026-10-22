@@ -21,7 +21,7 @@ export function initialStage(type: RoomType): Stage {
   return type === 'feature' ? FEATURE_STAGES[0] : BUG_STAGES[0];
 }
 
-export const ROOM_STATUSES = ['open', 'closed', 'archived'] as const;
+export const ROOM_STATUSES = ['open', 'paused', 'closed', 'archived'] as const;
 export const RoomStatusSchema = z.enum(ROOM_STATUSES);
 export type RoomStatus = z.infer<typeof RoomStatusSchema>;
 
@@ -59,6 +59,9 @@ export const ERROR_CODES = [
   'FORBIDDEN',
   'INVALID_ARGUMENT',
   'ROOM_CLOSED',
+  'ROOM_PAUSED',
+  'LIMIT_REACHED',
+  'VERSION_CONFLICT',
   'SLUG_TAKEN',
   'NOT_A_PARTICIPANT',
   'STALE_CONTEXT',
