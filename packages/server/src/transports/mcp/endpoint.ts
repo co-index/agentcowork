@@ -16,15 +16,22 @@ interface Session {
   principal: Principal;
   participants: Set<string>;
   lastActiveAt: number;
-  /** Requests currently being served (a pending msg_wait keeps the session alive). */
+  /** Requests currently being served, including the client's standing GET stream. */
   inFlight: number;
+  /** POST requests (tool calls) in progress; only these protect a session from eviction. */
+  calls: number;
 }
 
 /**
  * MCP Streamable HTTP endpoint at /mcp (stateful sessions, one McpServer per session).
  * Only Streamable HTTP is supported; the deprecated HTTP+SSE transport is not.
  */
-export function registerMcpEndpoint(app: FastifyInstance, services: Services, auth: AuthProvider) {
+export function registerMcpEndpoint(
+  app: FastifyInstance,
+  services: Services,
+  auth: AuthProvider,
+  maxSessions = Infinity,
+) {
   const sessions = new Map<string, Session>();
 
   const authenticate = async (req: FastifyRequest, reply: FastifyReply) => {
@@ -54,7 +61,9 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
       extra: { principal: session.principal },
     };
     session.lastActiveAt = Date.now();
+    const isCall = req.method === 'POST';
     session.inFlight++;
+    if (isCall) session.calls++;
     reply.hijack();
     try {
       await session.transport.handleRequest(
@@ -64,6 +73,7 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
       );
     } finally {
       session.inFlight--;
+      if (isCall) session.calls--;
       session.lastActiveAt = Date.now();
     }
   };
@@ -76,6 +86,23 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
     const stillDriven = new Set([...sessions.values()].flatMap((s) => [...s.participants]));
     const orphaned = [...session.participants].filter((p) => !stillDriven.has(p));
     void services.access.markOffline(orphaned).catch(() => undefined);
+  };
+
+  /**
+   * At the session cap, evicts the longest-idle session; false if every session is mid-call.
+   * A standing GET stream does not count as busy: every SDK client keeps one open.
+   */
+  const makeRoomForSession = (): boolean => {
+    if (sessions.size < maxSessions) return true;
+    let victim: [string, Session] | undefined;
+    for (const entry of sessions) {
+      if (entry[1].calls > 0) continue;
+      if (!victim || entry[1].lastActiveAt < victim[1].lastActiveAt) victim = entry;
+    }
+    if (!victim) return false;
+    closeSession(victim[0]);
+    void victim[1].transport.close();
+    return true;
   };
 
   app.post('/mcp', async (req, reply) => {
@@ -98,6 +125,13 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
         .send(jsonRpcError(-32000, 'Bad Request: no session id and not an initialize request'));
     }
 
+    if (!makeRoomForSession()) {
+      return reply
+        .code(503)
+        .header('Retry-After', '30')
+        .send(jsonRpcError(-32000, 'Too many active sessions on this hub; retry later'));
+    }
+
     const participants = new Set<string>();
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -113,6 +147,7 @@ export function registerMcpEndpoint(app: FastifyInstance, services: Services, au
       participants,
       lastActiveAt: Date.now(),
       inFlight: 0,
+      calls: 0,
     };
     transport.onclose = () => {
       if (transport.sessionId) closeSession(transport.sessionId);

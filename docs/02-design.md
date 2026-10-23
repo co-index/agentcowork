@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正）
+版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正；v0.7：资源上限）
 
 ## 1. 目标与非目标
 
@@ -142,6 +142,10 @@ Add to Claude Code:
 | `AGENTCOWORK_WAIT_MAX_SECONDS` | `240` | 单次 `msg_wait` 最长阻塞时间 |
 | `AGENTCOWORK_HEARTBEAT_SECONDS` | `15` | `msg_wait` 挂起期间发送 progress 通知的间隔 |
 | `AGENTCOWORK_LOG` | 不输出 | HTTP 日志级别（如 `info`），用于排查 |
+| `AGENTCOWORK_MAX_SESSIONS` | `200` | 同时存在的 MCP 会话上限。满了先回收最久没有工具调用的会话（客户端常驻的 GET 流不算忙），全部都在调用中则返回 503 |
+| `AGENTCOWORK_MAX_WAITERS` | `1000` | 全局同时挂起的 `msg_wait` 上限 |
+| `AGENTCOWORK_MAX_WAITS_PER_PARTICIPANT` | `4` | 每个参与者同时挂起的 `msg_wait` 上限（正常 agent 只用 1 个） |
+| `AGENTCOWORK_MAX_EVENT_STREAMS` | `200` | Web 页面 SSE 连接上限 |
 | `AGENTCOWORK_RETENTION_DAYS` | `0`（不清理） | 已关闭房间的保留天数 |
 
 ## 6. 数据模型
@@ -287,6 +291,7 @@ msg_post({
    → 冲突：{ error: "STALE_CONTEXT", missed_messages: Message[], has_more, sync: {...} }
    → token 无效（已用过、过期、不属于自己）：{ error: "TOKEN_INVALID", missed_messages, has_more, sync }
    → 其他错误：{ error: "FORBIDDEN" | "NOT_A_PARTICIPANT" | "ROOM_CLOSED" | "INVALID_ARGUMENT" | "NOT_FOUND", message }
+   → 超出资源上限：{ error: "TOO_MANY", message }（REST 返回 429）
 ```
 
 工具错误以 MCP `isError: true` 返回，内容是上面的 JSON。`kind=decision` 只有主持人可以发（人类发言在 M2 的 Web 端实现）。

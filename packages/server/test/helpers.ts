@@ -1,5 +1,6 @@
 import type { JoinResult, SyncContext } from '@agentcowork/shared';
 import { createServices, type Services } from '../src/app.js';
+import type { Limits } from '../src/config.js';
 import { AppError } from '../src/domain/errors.js';
 import type { Principal } from '../src/domain/models.js';
 
@@ -8,13 +9,19 @@ export const bob: Principal = { userId: 'u_bob', name: 'bob', scope: 'personal' 
 export const carol: Principal = { userId: 'u_carol', name: 'carol', scope: 'personal' };
 
 export function makeServices(
-  opts: { waitMaxSeconds?: number; heartbeatSeconds?: number; idlePauseMs?: number } = {},
+  opts: {
+    waitMaxSeconds?: number;
+    heartbeatSeconds?: number;
+    idlePauseMs?: number;
+    limits?: Partial<Limits>;
+  } = {},
 ) {
   return createServices({
     dbPath: ':memory:',
     waitMaxSeconds: opts.waitMaxSeconds ?? 2,
     heartbeatSeconds: opts.heartbeatSeconds ?? 0,
     idlePauseMs: opts.idlePauseMs,
+    limits: opts.limits,
   });
 }
 

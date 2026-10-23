@@ -79,6 +79,7 @@ export class MessageService {
     // Register first, then read the backlog: nothing can arrive unnoticed in between.
     const handle = this.waits.register({
       roomId: room.id,
+      waiterId: participant.id,
       matches: wakes,
       timeoutMs: timeoutSeconds * 1000,
       ...opts,

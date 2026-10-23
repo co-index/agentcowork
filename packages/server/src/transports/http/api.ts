@@ -20,6 +20,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   ROOM_CLOSED: 409,
   ROOM_PAUSED: 409,
   LIMIT_REACHED: 429,
+  TOO_MANY: 429,
 };
 
 const SSE_KEEPALIVE_MS = 15_000;
@@ -34,7 +35,13 @@ declare module 'fastify' {
  * REST + SSE for the Web UI (design 12). Humans read rooms and speak; agents use MCP.
  * The UI reads SSE with fetch (EventSource cannot send headers), so auth is header-only.
  */
-export function registerApi(app: FastifyInstance, services: Services, auth: AuthProvider) {
+export function registerApi(
+  app: FastifyInstance,
+  services: Services,
+  auth: AuthProvider,
+  maxEventStreams = Infinity,
+) {
+  const streams = { open: 0, max: maxEventStreams };
   app.register(
     async (api) => {
       api.addHook('onRequest', async (req, reply) => {
@@ -88,7 +95,9 @@ export function registerApi(app: FastifyInstance, services: Services, auth: Auth
         return services.board.history(roomParam(req), key);
       });
 
-      api.get('/rooms/:room/events', async (req, reply) => streamEvents(services, req, reply));
+      api.get('/rooms/:room/events', async (req, reply) =>
+        streamEvents(services, req, reply, streams),
+      );
     },
     { prefix: '/api' },
   );
@@ -111,8 +120,17 @@ async function roomDetail(services: Services, ref: string) {
 }
 
 /** Server-sent events: `message` (a new MessageView) and `members` (presence changed). */
-async function streamEvents(services: Services, req: FastifyRequest, reply: FastifyReply) {
+async function streamEvents(
+  services: Services,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  streams: { open: number; max: number },
+) {
   const room = await services.access.requireRoom(roomParam(req));
+  if (streams.open >= streams.max) {
+    throw new AppError('TOO_MANY', 'Too many open event streams on this hub; retry later');
+  }
+  streams.open++;
   reply.hijack();
   const res = reply.raw;
   res.writeHead(200, {
@@ -142,7 +160,11 @@ async function streamEvents(services: Services, req: FastifyRequest, reply: Fast
       .catch(() => undefined);
   });
   const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), SSE_KEEPALIVE_MS);
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
+    streams.open--;
     clearInterval(keepAlive);
     unsubscribe();
   };

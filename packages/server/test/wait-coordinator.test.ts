@@ -99,4 +99,27 @@ describe('WaitCoordinator', () => {
     wc.dispose();
     await expect(Promise.all([a.promise, b.promise])).resolves.toEqual(['aborted', 'aborted']);
   });
+
+  it('enforces the global and per-participant caps and frees slots on settle', async () => {
+    const wc = new WaitCoordinator(new MemoryEventBus(), 0, {
+      maxWaiters: 3,
+      maxWaitsPerParticipant: 2,
+    });
+    const req = (waiterId: string) => ({
+      roomId: 'r1',
+      waiterId,
+      matches: () => true,
+      timeoutMs: 5000,
+    });
+    const a1 = wc.register(req('a'));
+    wc.register(req('a'));
+    expect(() => wc.register(req('a'))).toThrow(/Too many concurrent msg_wait/);
+    wc.register(req('b'));
+    expect(() => wc.register(req('c'))).toThrow(/too many waiting requests/);
+
+    a1.cancel();
+    await a1.promise;
+    expect(() => wc.register(req('a'))).not.toThrow();
+    wc.dispose();
+  });
 });

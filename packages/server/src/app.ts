@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Config } from './config.js';
+import { DEFAULT_LIMITS, type Config, type Limits } from './config.js';
 import { MemoryEventBus } from './infra/events/memory-event-bus.js';
 import { openSqliteRepository } from './infra/db/sqlite-repository.js';
 import { Access } from './services/access.js';
@@ -37,6 +37,7 @@ export interface ServiceOptions {
   heartbeatSeconds: number;
   /** Override the 30-minute idle pause (tests). */
   idlePauseMs?: number;
+  limits?: Partial<Limits>;
 }
 
 export function createServices(config: ServiceOptions, clock: Clock = systemClock): Services {
@@ -44,7 +45,8 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
   const bus = new MemoryEventBus();
   const thread = new Thread(repo, bus, clock);
   const tokens = new ReplyTokens(repo, clock);
-  const waits = new WaitCoordinator(bus, config.heartbeatSeconds * 1000);
+  const limits = { ...DEFAULT_LIMITS, ...config.limits };
+  const waits = new WaitCoordinator(bus, config.heartbeatSeconds * 1000, limits);
   const access = new Access(repo, bus, clock);
   const board = new BoardService(repo, access, thread, clock);
   const stages = new StageService(repo, access, thread, clock, config.idlePauseMs);
@@ -71,7 +73,10 @@ export interface Hub {
 
 export function createHub(config: Config, auth: AuthProvider): Hub {
   const services = createServices(config);
-  const http = buildHttpServer(services, auth, { webRoot: config.webRoot });
+  const http = buildHttpServer(services, auth, {
+    webRoot: config.webRoot,
+    limits: config.limits,
+  });
   const janitor = setInterval(() => {
     services.stages.pauseIdleRooms().catch((err) => console.error('[janitor]', err));
   }, 60_000);

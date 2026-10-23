@@ -5,6 +5,25 @@ import { fileURLToPath } from 'node:url';
 
 export type Mode = 'host' | 'server';
 
+/** Caps that keep a misbehaving or malicious token holder from exhausting the hub. */
+export interface Limits {
+  /** MCP sessions alive at once; idle ones are evicted first when full. */
+  maxSessions: number;
+  /** msg_wait calls suspended at once, across all rooms. */
+  maxWaiters: number;
+  /** Concurrent msg_wait calls per participant (a well-behaved agent uses one). */
+  maxWaitsPerParticipant: number;
+  /** Web UI event streams open at once. */
+  maxEventStreams: number;
+}
+
+export const DEFAULT_LIMITS: Limits = {
+  maxSessions: 200,
+  maxWaiters: 1000,
+  maxWaitsPerParticipant: 4,
+  maxEventStreams: 200,
+};
+
 export interface Config {
   mode: Mode;
   port: number;
@@ -18,6 +37,7 @@ export interface Config {
   heartbeatSeconds: number;
   /** Built Web UI directory, if any. */
   webRoot: string | undefined;
+  limits: Limits;
 }
 
 export function loadConfig(
@@ -36,6 +56,15 @@ export function loadConfig(
     waitMaxSeconds: intEnv(env.AGENTCOWORK_WAIT_MAX_SECONDS, 240),
     heartbeatSeconds: intEnv(env.AGENTCOWORK_HEARTBEAT_SECONDS, 15),
     webRoot: env.AGENTCOWORK_WEB_ROOT || defaultWebRoot(),
+    limits: {
+      maxSessions: intEnv(env.AGENTCOWORK_MAX_SESSIONS, DEFAULT_LIMITS.maxSessions),
+      maxWaiters: intEnv(env.AGENTCOWORK_MAX_WAITERS, DEFAULT_LIMITS.maxWaiters),
+      maxWaitsPerParticipant: intEnv(
+        env.AGENTCOWORK_MAX_WAITS_PER_PARTICIPANT,
+        DEFAULT_LIMITS.maxWaitsPerParticipant,
+      ),
+      maxEventStreams: intEnv(env.AGENTCOWORK_MAX_EVENT_STREAMS, DEFAULT_LIMITS.maxEventStreams),
+    },
   };
   const merged = { ...defaults, ...stripUndefined(overrides) };
   if (merged.waitMaxSeconds < 1) throw new Error('AGENTCOWORK_WAIT_MAX_SECONDS must be >= 1');

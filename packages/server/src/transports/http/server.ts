@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Services } from '../../app.js';
+import { DEFAULT_LIMITS, type Limits } from '../../config.js';
 import type { AuthProvider } from '../../services/ports.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import { registerApi } from './api.js';
@@ -9,6 +10,7 @@ import { registerApi } from './api.js';
 export interface HttpOptions {
   /** Directory with the built Web UI; skipped when missing. */
   webRoot?: string;
+  limits?: Partial<Limits>;
 }
 
 export function buildHttpServer(
@@ -26,8 +28,9 @@ export function buildHttpServer(
   });
 
   app.get('/healthz', async () => ({ ok: true }));
-  registerMcpEndpoint(app, services, auth);
-  registerApi(app, services, auth);
+  const limits = { ...DEFAULT_LIMITS, ...opts.limits };
+  registerMcpEndpoint(app, services, auth, limits.maxSessions);
+  registerApi(app, services, auth, limits.maxEventStreams);
 
   if (opts.webRoot && existsSync(opts.webRoot)) {
     app.register(fastifyStatic, { root: opts.webRoot, wildcard: false });

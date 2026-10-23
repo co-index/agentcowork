@@ -292,6 +292,33 @@ describe('MessageService', () => {
     });
   });
 
+  describe('resource limits', () => {
+    it('rejects extra concurrent msg_wait calls for one participant with TOO_MANY', async () => {
+      const limited = makeServices({ limits: { maxWaitsPerParticipant: 1 } });
+      try {
+        const { guest } = await roomWithTwo(limited);
+        const ac = new AbortController();
+        const args = {
+          room: 'REQ-1',
+          participant_id: guest.participant_id,
+          after_seq: guest.sync.current_seq,
+        };
+        const first = limited.messages.wait(bob, args, { signal: ac.signal });
+        await new Promise((r) => setTimeout(r, 20));
+        await expectAppError(limited.messages.wait(bob, args), 'TOO_MANY');
+        ac.abort();
+        await first;
+        // The slot is free again once the first call returns.
+        const again = new AbortController();
+        const third = limited.messages.wait(bob, args, { signal: again.signal });
+        again.abort();
+        await third;
+      } finally {
+        await closeServices(limited);
+      }
+    });
+  });
+
   describe('permissions and validation', () => {
     it('only the host may post decisions', async () => {
       const { guest } = await roomWithTwo(s);
