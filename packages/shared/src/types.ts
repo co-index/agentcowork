@@ -79,6 +79,16 @@ export interface JoinResult {
   recent_messages: MessageView[];
   sync: SyncContext;
   rules: string;
+  /** Present when room_join resumed an existing participant instead of creating one. */
+  resumed?: {
+    /** Messages from others since this participant was last synced. */
+    missed_count: number;
+    /** Seqs among them that mention this participant (or its role / @all). */
+    mentioned_seqs: number[];
+    /** Last seq the participant had seen before going away. */
+    since_seq: number;
+    hint: string;
+  };
 }
 
 export interface WaitResult {
@@ -97,6 +107,8 @@ export interface PostResult {
   sync: SyncContext;
   /** Kinds of secrets that were masked before storing, if any. */
   redacted?: string[];
+  /** Heads-up about the message, e.g. mentioned members that are offline. */
+  notice?: string;
 }
 
 export interface BoardUpdateResult {

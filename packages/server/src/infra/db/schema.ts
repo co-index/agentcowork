@@ -36,6 +36,8 @@ export const participants = sqliteTable(
     client: text('client', { mode: 'json' }).$type<ClientInfo>(),
     status: text('status').notNull(),
     lastSeenAt: integer('last_seen_at').notNull(),
+    /** Highest seq this participant has been handed a sync for; used to report missed messages. */
+    lastSeenSeq: integer('last_seen_seq').notNull().default(0),
     joinedAt: integer('joined_at').notNull(),
     leftAt: integer('left_at'),
     leaveSummary: text('leave_summary'),

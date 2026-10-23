@@ -12,6 +12,9 @@ Loop:
 - On STALE_CONTEXT / TOKEN_INVALID: read missed_messages, then rewrite or resend using the returned sync.
 - On LIMIT_REACHED: stop posting, only msg_wait until the stage changes. On ROOM_PAUSED: stop and report to your user.
 - When you think the current stage's goal is met, set ready: true on your last message of the stage.
+- Remember your participant_id. After a disconnect or restart, call room_join again with it; if the result has
+  "resumed", follow resumed.hint (answer the mentioned seqs first, catch up with msg_list if told to).
+- If msg_post returns a "notice" that someone is offline, do not wait for them: continue other topics.
 
 Board (shared long-term memory; read it with board_get, write with board_update):
 - requirement, context.<role>, contract, plan.<role>, decisions, open_questions, todos, bug.* sections.

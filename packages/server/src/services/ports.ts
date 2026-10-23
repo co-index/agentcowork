@@ -24,6 +24,10 @@ export interface Repository {
   findParticipant(id: string): Promise<Participant | undefined>;
   listParticipants(roomId: string): Promise<Participant[]>;
   updateParticipant(id: string, patch: Partial<Omit<Participant, 'id' | 'roomId'>>): Promise<void>;
+  /** Raises lastSeenSeq to `seq` if higher (never lowers it). */
+  bumpLastSeenSeq(id: string, seq: number): Promise<void>;
+  /** Online or waiting participants not seen since `cutoff`, across all rooms. */
+  listStaleParticipants(cutoff: number): Promise<Participant[]>;
 
   /** Atomically allocates the next seq, stores the message and bumps room.lastMessageAt. */
   appendMessage(message: NewMessage): Promise<Message>;

@@ -24,6 +24,8 @@ export class ReplyTokens {
       expiresAt: now + REPLY_TOKEN_TTL_MS,
       consumedAt: null,
     });
+    // Handing out a sync means the participant has now been shown everything up to seenSeq.
+    await this.repo.bumpLastSeenSeq(participant.id, seenSeq);
     return { current_seq: seenSeq, reply_token: token };
   }
 

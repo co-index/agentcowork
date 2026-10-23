@@ -59,6 +59,7 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
     tokens,
     waits,
     config.waitMaxSeconds,
+    clock,
   );
   return { repo, bus, access, rooms, messages, board, stages, thread, waits };
 }
@@ -79,6 +80,10 @@ export function createHub(config: Config, auth: AuthProvider): Hub {
   });
   const janitor = setInterval(() => {
     services.stages.pauseIdleRooms().catch((err) => console.error('[janitor]', err));
+    // Two full wait periods without a request means the agent is gone (e.g. machine shut down).
+    services.access
+      .markStale(config.waitMaxSeconds * 2000, (id) => services.messages.isWaiting(id))
+      .catch((err) => console.error('[janitor]', err));
   }, 60_000);
   janitor.unref();
   return {

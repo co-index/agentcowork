@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正；v0.7：资源上限）
+版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正；v0.7：资源上限；v0.8：离线检测、断线重连、离线提醒）
 
 ## 1. 目标与非目标
 
@@ -252,7 +252,8 @@ room_join({
   role: Role,
   display_name?: string,        // 默认 "<角色>·<用户名>"
   repo?: { name, remote_url?, branch?, worktree?, head_commit? },
-  client?: { name, version }
+  client?: { name, version },
+  participant_id?: string       // 之前在本房间的 participant_id，断线后用它接回原身份
 }) → {
   participant_id,
   room: { slug, title, type, stage, host },
@@ -260,7 +261,10 @@ room_join({
   board_summary: { [key]: { version, excerpt } },
   recent_messages: Message[],   // 最近 N 条
   sync: { current_seq, reply_token },
-  rules: string                 // 本房间的行为规范（包含防注入说明，见 10.2）
+  rules: string,                // 本房间的行为规范（包含防注入说明，见 10.2）
+  resumed?: {                   // 接回了已有参与者时才有，见 9.1
+    missed_count, mentioned_seqs: number[], since_seq, hint
+  }
 }
 
 msg_wait({
@@ -287,7 +291,8 @@ msg_post({
   ready?: boolean,              // 本端认为当前阶段可以结束
   expected_last_seq: number,
   reply_token: string
-}) → 成功：{ seq, sync: { current_seq, reply_token } }
+}) → 成功：{ seq, sync: { current_seq, reply_token }, redacted?: string[], notice?: string }
+   //  notice：被 @ 的成员离线或不存在时的提醒，例如 "frontend·bob is offline (last seen 12 min ago)"
    → 冲突：{ error: "STALE_CONTEXT", missed_messages: Message[], has_more, sync: {...} }
    → token 无效（已用过、过期、不属于自己）：{ error: "TOKEN_INVALID", missed_messages, has_more, sync }
    → 其他错误：{ error: "FORBIDDEN" | "NOT_A_PARTICIPANT" | "ROOM_CLOSED" | "INVALID_ARGUMENT" | "NOT_FOUND", message }
@@ -377,6 +382,23 @@ room_join
 - SDK 在 SSE 响应上每 15 秒发送一次注释帧作为保活，与 progress 通知互为补充；响应带 `X-Accel-Buffering: no`
 - **可续传**：每个 MCP 会话配一个有上限的内存事件存储（500 条、10 分钟）。代理切断响应流时，客户端带 `Last-Event-ID` 重连即可拿回 `msg_wait` 的结果，否则结果丢失、客户端会挂到自己的超时
 - nginx 实测结论见 `docs/05-client-compat.md`：`proxy_read_timeout` 衡量的是两次读之间的间隔，Hub 每 15 秒有数据写出，默认 60 秒不会切断；推荐配置见 `deploy/nginx/agentcowork.conf`
+
+### 9.1 离线与断线重连
+
+**离线检测**（三种途径，任一满足即为 `offline`）：
+1. MCP 会话被客户端关闭（DELETE），且该参与者没有被其他存活会话使用
+2. 会话空闲 30 分钟被回收
+3. 后台每分钟检查：参与者没有挂起中的 `msg_wait`，且超过 `2 × AGENTCOWORK_WAIT_MAX_SECONDS`（默认 8 分钟）没有任何请求。电脑直接关机不会发出断开信号，靠这一条在几分钟内发现。`msg_wait` 自然超时结束不算"客户端活动"，不会刷新最后活动时间
+
+离线成员不计入"全员 ready"，不会拖住阶段推进；它的消息和 Board 内容都保留。
+
+**断线重连**：参与者记录 `last_seen_seq`（最后一次拿到 sync 时覆盖到的 seq）。`room_join` 按以下顺序决定是否接回已有参与者：
+1. 传了 `participant_id`：必须属于本人、本房间、没有离开（在线也可以接回，对应客户端换了会话）
+2. 否则：同一用户、同一角色、同一仓库（双方都有 worktree 时比较 worktree，否则比较仓库名），并且处于 `offline` 的参与者里最近活动的一个。**在线的参与者不会被隐式接管**，因为 Host 模式下所有人共用一个用户 id
+
+接回时不新建成员，发一条 "X reconnected." 系统消息，并在返回中给出 `resumed`：离线期间别人发的消息数、其中 @ 自己的 seq、以及操作建议（超出 `recent_messages` 的部分用 `msg_list(after_seq=since_seq)` 补读）。
+
+**离线提醒**：`msg_post` 的 `mentions` 中有成员离线或房间里不存在该角色时，返回 `notice`，提示发言者不要空等，可以先讨论别的或请人介入。
 
 ## 10. 安全
 

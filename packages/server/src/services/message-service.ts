@@ -19,7 +19,7 @@ import {
   type Room,
 } from '../domain/models.js';
 import { redact } from '../security/redact.js';
-import type { Repository } from './ports.js';
+import type { Clock, Repository } from './ports.js';
 import type { ReplyTokens } from './reply-tokens.js';
 import type { Access } from './access.js';
 import { STAGE_GUIDANCE } from './rules.js';
@@ -56,6 +56,7 @@ export class MessageService {
     private readonly tokens: ReplyTokens,
     private readonly waits: WaitCoordinator,
     private readonly waitMaxSeconds: number,
+    private readonly clock: Clock,
   ) {}
 
   async wait(
@@ -105,7 +106,8 @@ export class MessageService {
       handle.cancel();
       const fresh = await this.repo.findParticipant(participant.id);
       if (fresh?.status === 'waiting' && !this.activeWaits.has(participant.id)) {
-        await this.access.setStatus(fresh, 'online');
+        // Not client activity: a dead client's wait also ends here, on timeout.
+        await this.access.setStatus(fresh, 'online', { touch: false });
       }
     }
 
@@ -193,13 +195,50 @@ export class MessageService {
         ready: input.ready ?? false,
       });
       await this.stages.afterAgentPost(room, message);
+      const notice = await this.offlineNotice(room.id, message.mentions, participant.id);
       // Hub messages appended by afterAgentPost are new context: the next sync starts before them.
       return {
         seq: message.seq,
         sync: await this.tokens.issue(participant, message.seq),
         ...(kinds.length ? { redacted: kinds } : {}),
+        ...(notice ? { notice } : {}),
       };
     });
+  }
+
+  /** Explains mentions nobody online can answer, so the sender does not wait in vain. */
+  private async offlineNotice(
+    roomId: string,
+    mentioned: string[],
+    selfId: string,
+  ): Promise<string | undefined> {
+    const targets = mentioned.filter((m) => m !== BROADCAST);
+    if (targets.length === 0) return undefined;
+    const members = (await this.repo.listParticipants(roomId)).filter(
+      (m) => m.status !== 'left' && m.id !== selfId,
+    );
+    const notes: string[] = [];
+    for (const target of targets) {
+      const matching = members.filter((m) => m.id === target || m.role === target);
+      if (matching.some((m) => m.status === 'online' || m.status === 'waiting')) continue;
+      if (matching.length === 0) {
+        notes.push(`nobody with role or id "${target}" is in the room`);
+        continue;
+      }
+      const lastSeen = Math.max(...matching.map((m) => m.lastSeenAt));
+      const minutes = Math.max(1, Math.round((this.clock.now() - lastSeen) / 60_000));
+      notes.push(`${matching[0]!.displayName} is offline (last seen ${minutes} min ago)`);
+    }
+    if (notes.length === 0) return undefined;
+    return (
+      `Heads-up: ${notes.join('; ')}. Your message is kept and will be seen when they come back. ` +
+      'Continue with other topics instead of waiting, or ask a human in the room.'
+    );
+  }
+
+  /** True while the participant has a msg_wait suspended (it is alive, just listening). */
+  isWaiting(participantId: string): boolean {
+    return this.activeWaits.has(participantId);
   }
 
   /** A human speaking from the Web UI: no strict sync, wakes everyone, lifts a pause. */

@@ -73,6 +73,14 @@ export type RoomCreateInput = z.infer<typeof RoomCreateInput>;
 export const RoomJoinInput = z.object({
   room: z.string().min(1).describe('Room slug or id'),
   ...JoinFields,
+  participant_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Your previous participant_id in this room, to resume it after a disconnect. ' +
+        'Without it, an offline participant with the same role and repository is resumed.',
+    ),
 });
 export type RoomJoinInput = z.infer<typeof RoomJoinInput>;
 

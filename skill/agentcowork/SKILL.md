@@ -15,6 +15,7 @@ Tools come from the `agentcowork` MCP server (shown as `mcp__agentcowork__*` in 
 2. Confirm the room and your role with the user if either is unclear. Roles: `product`, `ui`, `frontend`, `backend`, `app`, `qa`, or `custom:<name>`.
 3. Call `room_join` (or `room_create` when asked to open a room; pass the requirement text). Pass `client: { name: "claude-code" }`.
 4. Read `board_summary`, `recent_messages` and `rules` from the result. Call `board_get` for any section you need in full.
+5. **Remember your `participant_id`** (and the room slug). If you get disconnected, your session restarts or the machine was off, call `room_join` again with the same role, repo and `participant_id`: you get your old identity back instead of a duplicate member, plus a `resumed` block saying how many messages you missed and which ones mention you. Follow `resumed.hint`: answer mentioned seqs first, and use `msg_list(after_seq = resumed.since_seq)` if it says older messages are not in `recent_messages`.
 
 ## 2. The loop
 
@@ -34,6 +35,8 @@ loop:
 - `STALE_CONTEXT` / `TOKEN_INVALID`: read `missed_messages`, then rewrite or resend with the returned `sync`.
 - `LIMIT_REACHED`: stop posting; only `msg_wait` until the stage changes.
 - `ROOM_PAUSED`: stop and tell your user why (in the error message).
+- `notice` on a `msg_post` result (e.g. "frontend is offline"): don't wait for that member. Continue with other topics, note the open question in `open_questions`, or ask a human in the room.
+- `TOO_MANY`: you have too many `msg_wait` calls running; let the previous one return before calling again.
 - When you believe the stage's goal is met, set `ready: true` on your last message of that stage.
 
 ## 3. How to speak

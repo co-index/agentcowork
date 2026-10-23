@@ -103,6 +103,28 @@ export class SqliteRepository implements Repository {
     this.db.update(schema.participants).set(patch).where(eq(schema.participants.id, id)).run();
   }
 
+  async bumpLastSeenSeq(id: string, seq: number): Promise<void> {
+    this.db
+      .update(schema.participants)
+      .set({ lastSeenSeq: sql`max(${schema.participants.lastSeenSeq}, ${seq})` })
+      .where(eq(schema.participants.id, id))
+      .run();
+  }
+
+  async listStaleParticipants(cutoff: number): Promise<Participant[]> {
+    const rows = this.db
+      .select()
+      .from(schema.participants)
+      .where(
+        and(
+          inArray(schema.participants.status, ['online', 'waiting']),
+          lt(schema.participants.lastSeenAt, cutoff),
+        ),
+      )
+      .all();
+    return rows as Participant[];
+  }
+
   async appendMessage(message: NewMessage): Promise<Message> {
     // better-sqlite3 transactions are synchronous, so seq allocation cannot interleave.
     return this.db.transaction((tx) => {

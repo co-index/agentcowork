@@ -5,10 +5,11 @@ import {
   type RoomJoinInput,
   type RoomLeaveInput,
   type RoomListInput,
+  type RepoInfo,
   type RoomSummaryView,
 } from '@agentcowork/shared';
 import { AppError } from '../domain/errors.js';
-import type { Participant, Principal, Room } from '../domain/models.js';
+import { mentions, type Participant, type Principal, type Room } from '../domain/models.js';
 import type { Access } from './access.js';
 import type { BoardService } from './board-service.js';
 import { redact } from '../security/redact.js';
@@ -114,6 +115,9 @@ export class RoomService {
     if (room.status === 'closed' || room.status === 'archived') {
       throw new AppError('ROOM_CLOSED', `Room "${input.room}" is ${room.status}`);
     }
+    const previous = await this.findResumable(principal, room.id, input);
+    if (previous) return this.resume(room, previous, input);
+
     const participant = await this.addParticipant(principal, room, input);
     await this.thread.system(
       room.id,
@@ -165,6 +169,7 @@ export class RoomService {
       client: input.client ?? null,
       status: 'online',
       lastSeenAt: now,
+      lastSeenSeq: 0,
       joinedAt: now,
       leftAt: null,
       leaveSummary: null,
@@ -176,6 +181,84 @@ export class RoomService {
       participantId: participant.id,
     });
     return participant;
+  }
+
+  /**
+   * The participant a join should resume: the explicit `participant_id`, or else the most
+   * recently seen *offline* participant of this user with the same role and repository.
+   * Online participants are never taken over implicitly (Host mode shares one user id).
+   */
+  private async findResumable(
+    principal: Principal,
+    roomId: string,
+    input: RoomJoinInput,
+  ): Promise<Participant | undefined> {
+    if (input.participant_id) {
+      const p = await this.repo.findParticipant(input.participant_id);
+      if (!p || p.roomId !== roomId || p.status === 'left') {
+        throw new AppError(
+          'NOT_A_PARTICIPANT',
+          `"${input.participant_id}" cannot be resumed in this room; join without participant_id`,
+        );
+      }
+      if (p.userId !== principal.userId) {
+        throw new AppError('FORBIDDEN', 'This participant belongs to another user');
+      }
+      return p;
+    }
+    const members = await this.repo.listParticipants(roomId);
+    return members
+      .filter(
+        (m) =>
+          m.status === 'offline' &&
+          m.userId === principal.userId &&
+          m.role === input.role &&
+          sameRepo(m.repo, input.repo ?? null),
+      )
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)[0];
+  }
+
+  private async resume(room: Room, p: Participant, input: RoomJoinInput): Promise<JoinResult> {
+    const since = p.lastSeenSeq;
+    const missed = await this.repo.listMessages(room.id, { afterSeq: since, limit: 1000 });
+    const fromOthers = missed.filter((m) => m.participantId !== p.id);
+    const mentioned = fromOthers
+      .filter((m) => m.senderType !== 'system' && mentions(m, p))
+      .map((m) => m.seq);
+
+    const changes = {
+      ...(input.display_name ? { displayName: input.display_name } : {}),
+      ...(input.repo ? { repo: input.repo } : {}),
+      ...(input.client ? { client: input.client } : {}),
+    };
+    if (Object.keys(changes).length > 0) await this.repo.updateParticipant(p.id, changes);
+    const fresh = { ...p, ...(await this.repo.findParticipant(p.id))! };
+    await this.access.setStatus(fresh, 'online');
+    await this.thread.system(room.id, `${fresh.displayName} reconnected.`);
+
+    const result = await this.joinResult(room, fresh);
+    const unseen = fromOthers.filter((m) => m.seq < (result.recent_messages[0]?.seq ?? 0)).length;
+    const hint = [
+      `Welcome back. ${fromOthers.length} message(s) from others arrived while you were away.`,
+      mentioned.length
+        ? `You were mentioned in seq ${mentioned.join(', ')}: answer those first.`
+        : '',
+      unseen > 0
+        ? `${unseen} of them are older than recent_messages; read them with msg_list(after_seq=${since}).`
+        : '',
+      'Check board_get for decisions made meanwhile.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return {
+      ...result,
+      resumed: {
+        missed_count: fromOthers.length,
+        mentioned_seqs: mentioned,
+        since_seq: since,
+        hint,
+      },
+    };
   }
 
   private async joinResult(room: Room, participant: Participant): Promise<JoinResult> {
@@ -207,4 +290,11 @@ export class RoomService {
       }
     }
   }
+}
+
+/** Same checkout: worktree when both know it, else repository name, else both unspecified. */
+function sameRepo(a: RepoInfo | null, b: RepoInfo | null): boolean {
+  if (!a || !b) return !a && !b;
+  if (a.worktree && b.worktree) return a.worktree === b.worktree;
+  return a.name === b.name;
 }

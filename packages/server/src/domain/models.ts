@@ -40,6 +40,7 @@ export interface Participant {
   client: ClientInfo | null;
   status: ParticipantStatus;
   lastSeenAt: number;
+  lastSeenSeq: number;
   joinedAt: number;
   leftAt: number | null;
   leaveSummary: string | null;

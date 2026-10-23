@@ -158,6 +158,33 @@ describe('MCP endpoint', () => {
     await second.close();
   });
 
+  it('an agent that lost its session resumes its participant from a new client', async () => {
+    const host = await connect();
+    const created = await call<JoinResult>(host, 'room_create', {
+      title: 'resume',
+      role: 'backend',
+    });
+    const before = await connect();
+    const joined = await call<JoinResult>(before, 'room_join', {
+      room: created.room.slug,
+      role: 'frontend',
+      repo: { name: 'admin-web' },
+    });
+    await (before.transport as StreamableHTTPClientTransport).terminateSession();
+    await before.close();
+
+    const after = await connect();
+    const resumed = await call<JoinResult>(after, 'room_join', {
+      room: created.room.slug,
+      role: 'frontend',
+      repo: { name: 'admin-web' },
+    });
+    expect(resumed.participant_id).toBe(joined.participant_id);
+    expect(resumed.resumed).toBeDefined();
+    expect(resumed.members.filter((m) => m.role === 'frontend')).toHaveLength(1);
+    await Promise.all([host.close(), after.close()]);
+  });
+
   it('three agents discuss concurrently without losing or duplicating messages', async () => {
     const ROUNDS = 5;
     const roles = ['backend', 'frontend', 'app'] as const;

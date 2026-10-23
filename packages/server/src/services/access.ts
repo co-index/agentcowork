@@ -45,10 +45,18 @@ export class Access {
     return { room, participant };
   }
 
-  async setStatus(participant: Participant, status: Participant['status']): Promise<void> {
+  /**
+   * Updates presence. `touch: false` keeps lastSeenAt unchanged, for transitions the hub makes
+   * on its own (a wait ending, a stale participant going offline) rather than client activity.
+   */
+  async setStatus(
+    participant: Participant,
+    status: Participant['status'],
+    opts: { touch?: boolean } = {},
+  ): Promise<void> {
     const changed = participant.status !== status;
     participant.status = status;
-    participant.lastSeenAt = this.clock.now();
+    if (opts.touch !== false) participant.lastSeenAt = this.clock.now();
     await this.repo.updateParticipant(participant.id, {
       status,
       lastSeenAt: participant.lastSeenAt,
@@ -60,6 +68,21 @@ export class Access {
         participantId: participant.id,
       });
     }
+  }
+
+  /**
+   * Marks participants offline that sent nothing for `staleMs` and are not mid-request.
+   * Catches agents whose machine went away without closing its MCP session.
+   */
+  async markStale(staleMs: number, isBusy: (participantId: string) => boolean): Promise<string[]> {
+    const stale = await this.repo.listStaleParticipants(this.clock.now() - staleMs);
+    const marked: string[] = [];
+    for (const p of stale) {
+      if (isBusy(p.id)) continue;
+      await this.setStatus(p, 'offline', { touch: false });
+      marked.push(p.id);
+    }
+    return marked;
   }
 
   /** Called when the MCP session that drove these participants goes away. */

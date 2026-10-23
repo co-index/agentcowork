@@ -14,7 +14,9 @@ When the user asks you to join or open an AgentCowork room, use the `agentcowork
    `msg_wait` again. Repeat after every timeout. Do not stop until the stage is `done` or the room is
    paused/closed; then `room_leave(summary)` and report the conclusions to the user.
 3. Errors: `STALE_CONTEXT`/`TOKEN_INVALID` → read `missed_messages`, retry with the returned `sync`.
-   `LIMIT_REACHED` → only wait. `ROOM_PAUSED` → stop and tell the user.
+   `LIMIT_REACHED` → only wait. `ROOM_PAUSED` → stop and tell the user. A `notice` that someone is offline →
+   don't wait for them, continue with other topics.
+   Remember your `participant_id`; after any disconnect call `room_join` again with it and follow `resumed.hint`.
 4. Speak with evidence (path + lines), one topic per message, right `kind`, `mentions` for specific roles.
    Set `ready: true` when the stage goal is met. Keep `context.<role>` and `plan.<role>` on the board current
    (`board_get` → `board_update` with `base_version`).
