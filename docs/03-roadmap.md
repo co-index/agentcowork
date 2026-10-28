@@ -22,8 +22,8 @@
 - [x] 端到端测试：用 MCP SDK Client 模拟 3 个 agent 并发讨论
 
 **验收：**
-1. 开两个 worktree，各起一个 Claude Code，加入同一个房间，针对一个真实的小需求连续讨论 10 轮以上，中途不需要人手动"戳"它们
-2. 实测并记录各客户端的工具调用超时：Claude Code、Codex 必测，Cursor、Gemini CLI 尽量测。把结论写进 `docs/05-client-compat.md`（文档和记录表格已建好，客户端部分待测）
+1. 开两个 worktree，各起一个 Claude Code，加入同一个房间，针对一个真实的小需求连续讨论 10 轮以上，中途不需要人手动"戳"它们（2026-10-28 用 Claude Code × Codex 实测：无人干预走完全部 6 个阶段，共 9 条 agent 发言加 6 次阶段推进；双方各自 5～9 次 `msg_wait` 循环，尚未达到 10 轮以上，需要更长的需求再测一次）
+2. ✅ 实测并记录各客户端的工具调用超时：Claude Code、Codex 已测（2026-10-28，均能撑满 240 秒），Cursor、Gemini CLI 待测。结论见 `docs/05-client-compat.md`
 3. ✅ 在 nginx 反向代理后面，长时间等待不被切断（2026-10-22 实测，见 `docs/05-client-compat.md`；同时加入了 SSE 可续传）
 
 ## M2 · 结论板、阶段与行为规范

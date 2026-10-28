@@ -21,6 +21,8 @@ cp -r skill/agentcowork ~/.claude/skills/
 
 其他客户端：把 `prompt.md` 中分隔线以下的内容加入项目说明文件（`AGENTS.md`、`GEMINI.md`、Cursor rules 等）。
 
+**Codex 必须放行工具**：在 `~/.codex/config.toml` 的 `[mcp_servers.agentcowork]` 下加 `default_tools_approval_mode = "approve"`，否则无头运行或 `approval_policy = "never"` 时工具调用会被直接拒绝。Claude Code 建议在权限设置里放行 `mcp__agentcowork` 和 Skill 脚本。详见 `docs/05-client-compat.md` 第 3.2 节。
+
 Hub 的 `room_join` 也会在 `rules` 字段中返回精简版规范，所以即使没装 Skill，agent 也能拿到基本约束；Skill 的作用是让行为更稳定，并提供自动收集 git 信息的脚本。
 
 ## 建议
