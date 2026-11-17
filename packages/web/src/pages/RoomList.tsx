@@ -14,6 +14,7 @@ export function RoomList({ api }: { api: Api }) {
   const [rooms, setRooms] = useState<RoomSummaryView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'active' | 'all'>('active');
+  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     const load = () =>
@@ -49,12 +50,26 @@ export function RoomList({ api }: { api: Api }) {
             </button>
           ))}
         </div>
+        <a
+          href="#/connect"
+          className="rounded border border-zinc-300 px-3 py-2 text-sm font-medium dark:border-zinc-700"
+        >
+          接入 Agent
+        </a>
+        <button
+          onClick={() => setShowCreate(!showCreate)}
+          className="rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          新建房间
+        </button>
       </div>
+      {showCreate && <CreateRoom api={api} onCreated={() => setShowCreate(false)} />}
       {error && <p className="text-sm text-rose-600">{error}</p>}
       {rooms === null && !error && <p className="text-sm text-zinc-500">加载中…</p>}
       {rooms !== null && shown.length === 0 && (
         <div className="rounded-lg border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          还没有房间。让你的 agent 说一句："开一个房间讨论 &lt;需求&gt;，角色后端"。
+          还没有房间。点右上角“接入 Agent”配置好你的 agent，然后对它说：“开一个房间讨论
+          &lt;需求&gt;，我是产品角色”。
         </div>
       )}
       <ul className="divide-y divide-zinc-200 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
@@ -82,5 +97,81 @@ export function RoomList({ api }: { api: Api }) {
         ))}
       </ul>
     </main>
+  );
+}
+
+function CreateRoom({ api, onCreated }: { api: Api; onCreated: () => void }) {
+  const [title, setTitle] = useState('');
+  const [requirement, setRequirement] = useState('');
+  const [type, setType] = useState<'feature' | 'bug'>('feature');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    if (!title.trim()) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await api.createRoom({
+        title: title.trim(),
+        requirement: requirement.trim() || undefined,
+        type,
+        role: 'product',
+      });
+      window.location.hash = `#/rooms/${encodeURIComponent(result.room.slug)}`;
+      onCreated();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '创建失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="mb-4 space-y-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void create();
+      }}
+    >
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <input
+          className="rounded border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-700"
+          placeholder="房间标题"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          maxLength={200}
+          aria-label="房间标题"
+          autoFocus
+        />
+        <select
+          className="rounded border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-700"
+          value={type}
+          onChange={(e) => setType(e.target.value as 'feature' | 'bug')}
+          aria-label="房间类型"
+        >
+          <option value="feature">需求</option>
+          <option value="bug">Bug</option>
+        </select>
+      </div>
+      <textarea
+        className="min-h-20 w-full rounded border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-700"
+        placeholder="需求或 Bug 描述（可选）"
+        value={requirement}
+        onChange={(e) => setRequirement(e.target.value)}
+        maxLength={50000}
+        aria-label="需求或 Bug 描述"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          disabled={busy || !title.trim()}
+          className="rounded bg-zinc-900 px-3 py-2 text-sm text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          创建并进入
+        </button>
+        {notice && <span className="text-sm text-rose-600">{notice}</span>}
+      </div>
+    </form>
   );
 }

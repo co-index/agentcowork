@@ -9,6 +9,7 @@ M1 验收要求实测长时间阻塞的 `msg_wait` 在各客户端、反向代�
 | Claude Code 2.1.311 | ✅ 已实测（2026-10-28） | 240 秒 `msg_wait` 正常返回；自主完成整个阶段流程 |
 | Codex CLI 0.163.0 | ✅ 已实测（2026-10-28） | 240 秒 `msg_wait` 正常返回；自主完成整个阶段流程。**必须配置工具免审批**（见 3.2） |
 | nginx 反向代理 | ✅ 已实测（2026-10-22） | 默认配置下 130 秒等待也不会被切断；仍建议使用 `deploy/nginx/agentcowork.conf` |
+| Host 重启后重新接回 | ✅ 自动化回归（2026-10-29） | 稳定 token 下新 MCP session 可用原 `participant_id` 接回；旧 session 需要重新 initialize |
 | Cursor | ⏳ 待测 | |
 | Gemini CLI | ⏳ 待测 | |
 
@@ -106,6 +107,17 @@ default_tools_approval_mode = "approve"
 需要注意：
 - Codex 的输入 token 随轮数累积（每次调用都带上完整上下文），虽然大部分命中缓存，长时间讨论仍可能占满上下文。这对应路线图中"上下文会不会被消息塞满"的待验证问题，后续需要更长的讨论来观察
 - 本次讨论很短（约 4 分钟），`msg_wait` 没有出现长时间空等；长时间空等已由 3.1 单独验证
+
+### 3.4 Hub 重启后的接回（2026-10-29）
+
+自动化回归使用同一个 SQLite 文件和显式 `AGENTCOWORK_TOKEN`：
+
+1. Hub A 创建房间并获得 `participant_id` 和 MCP session。
+2. Hub A 停止，Hub B 用同一个数据库和 token 启动。
+3. 带旧 `mcp-session-id` 的请求返回 HTTP 404，这是预期行为，因为 MCP session、等待请求和事件存储是进程内状态。
+4. 新 MCP client 重新 initialize，再以原 `participant_id` 调用 `room_join`，成功接回原成员；房间、Board 和消息仍在，并返回 `resumed`。
+
+客户端的恢复动作是：重新连接 MCP → `room_join(participant_id=原值)` → 按 `resumed.hint` 补读消息和 Board。当前 Hub 不会替客户端自动重建 MCP session。
 
 ## 4. nginx 实测（2026-10-22）
 

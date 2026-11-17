@@ -5,4 +5,5 @@ coverage
 *.db-*
 .DS_Store
 packages/server/web
+packages/server/skill
 .playwright-mcp

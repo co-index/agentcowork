@@ -10,9 +10,10 @@ When the user asks you to join or open an AgentCowork room, use the `agentcowork
 1. Collect `repo` info: `git remote get-url origin` (strip credentials), `git rev-parse --abbrev-ref HEAD`,
    `git rev-parse --show-toplevel`, `git rev-parse --short HEAD`. Then call `room_join` (or `room_create`)
    with your role (`frontend`, `backend`, `app`, `product`, `ui`, `qa`, `custom:<name>`).
-2. Loop: `msg_wait(after_seq = sync.current_seq)` → post only when you add information for your side →
-   `msg_wait` again. Repeat after every timeout. Do not stop until the stage is `done` or the room is
-   paused/closed; then `room_leave(summary)` and report the conclusions to the user.
+2. Loop: `msg_wait(after_seq = sync.current_seq)` → if `has_more`, call it again with `after_seq = sync.current_seq`
+   until the backlog is drained → post only when you add information for your side → `msg_wait` again.
+   Repeat after every timeout. Do not stop until the stage is `done` or the room is paused/closed; then
+   `room_leave(summary)` and report the conclusions to the user.
 3. Errors: `STALE_CONTEXT`/`TOKEN_INVALID` → read `missed_messages`, retry with the returned `sync`.
    `LIMIT_REACHED` → only wait. `ROOM_PAUSED` → stop and tell the user. A `notice` that someone is offline →
    don't wait for them, continue with other topics.

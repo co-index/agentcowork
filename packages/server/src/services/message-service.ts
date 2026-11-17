@@ -30,6 +30,8 @@ import type { WaitCoordinator } from './wait-coordinator.js';
 
 /** Max messages handed back by one msg_wait / conflict response; the rest come next call. */
 export const BATCH_LIMIT = 50;
+/** Maximum content characters handed back in one batch; a single message is never truncated. */
+export const DEFAULT_BATCH_MAX_CHARS = 50_000;
 
 export interface WaitOptions {
   signal?: AbortSignal;
@@ -57,7 +59,12 @@ export class MessageService {
     private readonly waits: WaitCoordinator,
     private readonly waitMaxSeconds: number,
     private readonly clock: Clock,
-  ) {}
+    msgBatchMaxChars = DEFAULT_BATCH_MAX_CHARS,
+  ) {
+    this.msgBatchMaxChars = msgBatchMaxChars;
+  }
+
+  private readonly msgBatchMaxChars: number;
 
   async wait(
     principal: Principal,
@@ -293,8 +300,15 @@ export class MessageService {
 
   private async readAfter(roomId: string, afterSeq: number): Promise<Batch> {
     const rows = await this.repo.listMessages(roomId, { afterSeq, limit: BATCH_LIMIT + 1 });
-    const hasMore = rows.length > BATCH_LIMIT;
-    const messages = hasMore ? rows.slice(0, BATCH_LIMIT) : rows;
+    const messages: Message[] = [];
+    let contentChars = 0;
+    for (const row of rows.slice(0, BATCH_LIMIT)) {
+      // Never split or truncate one message; a single unusually large message may exceed the budget.
+      if (messages.length > 0 && contentChars + row.content.length > this.msgBatchMaxChars) break;
+      messages.push(row);
+      contentChars += row.content.length;
+    }
+    const hasMore = messages.length < rows.length;
     const seenSeq = messages.at(-1)?.seq ?? Math.min(afterSeq, await this.repo.currentSeq(roomId));
     return { messages, hasMore, seenSeq };
   }

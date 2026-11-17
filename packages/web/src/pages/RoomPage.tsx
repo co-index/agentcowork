@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Board } from '../components/Board';
 import { Composer } from '../components/Composer';
 import { Members } from '../components/Members';
+import { RoomControls } from '../components/RoomControls';
 import { StageBar } from '../components/StageBar';
 import { Thread } from '../components/Thread';
 import { ApiError, type Api, type RoomDetail } from '../lib/api';
@@ -88,6 +89,12 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
           <span className="text-xs text-zinc-500">
             {room.type === 'bug' ? 'Bug 排查' : '需求讨论'}
           </span>
+          <a
+            href={`#/connect/${encodeURIComponent(room.slug)}`}
+            className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+          >
+            接入 Agent
+          </a>
           <span
             className={`ml-auto flex items-center gap-1.5 text-xs ${live ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}`}
           >
@@ -96,6 +103,14 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
           </span>
         </div>
         <StageBar stages={detail.stages} current={room.stage} />
+        <RoomControls
+          api={api}
+          slug={slug}
+          stages={detail.stages}
+          currentStage={room.stage}
+          status={room.status}
+          onChanged={() => void refreshDetail()}
+        />
         {room.status === 'paused' && (
           <p className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
             房间已暂停：{detail.pause_reason ?? '等待人来处理'}。在下方发言即可恢复讨论。
@@ -113,7 +128,12 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
           />
           <Composer api={api} slug={slug} disabled={room.status === 'closed'} />
         </div>
-        <Board api={api} slug={slug} sections={detail.board} />
+        <Board
+          api={api}
+          slug={slug}
+          sections={detail.board}
+          onChanged={() => void refreshDetail()}
+        />
       </div>
     </div>
   );

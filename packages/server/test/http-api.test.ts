@@ -87,6 +87,74 @@ describe('REST API', () => {
     expect(res.messages.at(-1).content).not.toContain('room-content');
   });
 
+  it('lets a human create, advance, edit and close a room', async () => {
+    const created = await json(
+      fetch(`${base}/api/rooms`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title: 'Human controls',
+          type: 'feature',
+          requirement: 'Coordinate from the Web UI',
+          role: 'product',
+        }),
+      }),
+    );
+    expect(created.room.stage).toBe('briefing');
+    const slug = created.room.slug as string;
+
+    const stage = await fetch(`${base}/api/rooms/${slug}/stage`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Alice', stage: 'research' }),
+    });
+    expect(stage.status).toBe(200);
+    expect(await json(stage)).toMatchObject({ stage: 'research', previous: 'briefing' });
+
+    const board = await fetch(`${base}/api/rooms/${slug}/board/contract`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ content: 'GET /orders', base_version: 0 }),
+    });
+    expect(board.status).toBe(200);
+    expect(await json(board)).toMatchObject({ key: 'contract', version: 1 });
+
+    const paused = await fetch(`${base}/api/rooms/${slug}/pause`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Alice' }),
+    });
+    expect(paused.status).toBe(200);
+    expect((await json(paused)).status).toBe('paused');
+
+    const resumed = await fetch(`${base}/api/rooms/${slug}/resume`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Alice' }),
+    });
+    expect(resumed.status).toBe(200);
+    expect((await json(resumed)).status).toBe('open');
+
+    const closed = await fetch(`${base}/api/rooms/${slug}/close`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Alice' }),
+    });
+    expect(closed.status).toBe(200);
+    expect(await json(closed)).toEqual({ ok: true });
+    expect((await json(fetch(`${base}/api/rooms/${slug}`, { headers }))).room.status).toBe(
+      'closed',
+    );
+
+    const invalidBoard = await fetch(`${base}/api/rooms/REQ-7/board/invalid%20key`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ content: 'x', base_version: -1 }),
+    });
+    expect(invalidBoard.status).toBe(400);
+    expect((await json(invalidBoard)).error).toBe('INVALID_ARGUMENT');
+  });
+
   it('maps errors to HTTP status codes', async () => {
     const missing = await fetch(`${base}/api/rooms/NOPE`, { headers });
     expect(missing.status).toBe(404);

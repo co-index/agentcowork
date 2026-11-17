@@ -1,0 +1,18 @@
+services:
+  agentcowork:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENTCOWORK_TOKEN: ${AGENTCOWORK_TOKEN:?set a long random token}
+      AGENTCOWORK_PUBLIC_URL: ${AGENTCOWORK_PUBLIC_URL:-http://localhost:7420}
+      AGENTCOWORK_BIND: 0.0.0.0
+      AGENTCOWORK_DB: /data/agentcowork.db
+    ports:
+      - '7420:7420'
+    volumes:
+      - agentcowork-data:/data
+
+volumes:
+  agentcowork-data:

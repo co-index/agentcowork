@@ -1,0 +1,12 @@
+node_modules
+.git
+.github
+coverage
+dist
+packages/*/dist
+packages/server/web
+packages/server/skill
+*.db
+*.db-*
+.playwright-mcp
+.DS_Store

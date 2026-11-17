@@ -107,6 +107,53 @@ export class Api {
     );
   }
 
+  createRoom(body: {
+    title: string;
+    type: 'feature' | 'bug';
+    requirement?: string;
+    role: 'product';
+  }) {
+    return this.request<{ room: RoomSummaryView; participant_id: string }>('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  setStage(slug: string, stage: string, name: string) {
+    return this.request<{ stage: string; previous: string }>(
+      `/api/rooms/${encodeURIComponent(slug)}/stage`,
+      { method: 'POST', body: JSON.stringify({ stage, name }) },
+    );
+  }
+
+  pauseRoom(slug: string, name: string) {
+    return this.request<{ status: string }>(`/api/rooms/${encodeURIComponent(slug)}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  resumeRoom(slug: string, name: string) {
+    return this.request<{ status: string }>(`/api/rooms/${encodeURIComponent(slug)}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  closeRoom(slug: string, name: string) {
+    return this.request<{ ok: true }>(`/api/rooms/${encodeURIComponent(slug)}/close`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  updateBoard(slug: string, key: string, body: { content: string; base_version: number }) {
+    return this.request<{ key: string; version: number; redacted?: string[] }>(
+      `/api/rooms/${encodeURIComponent(slug)}/board/${encodeURIComponent(key)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+  }
+
   boardHistory(slug: string, key: string) {
     return this.get<{ versions: BoardSectionView[] }>(
       `/api/rooms/${encodeURIComponent(slug)}/board/${encodeURIComponent(key)}/history`,

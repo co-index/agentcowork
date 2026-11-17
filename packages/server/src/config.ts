@@ -30,11 +30,15 @@ export interface Config {
   bind: string;
   /** SQLite file path, or ':memory:'. */
   dbPath: string;
+  /** Host bearer token; unset means generate a random token at startup. */
+  token: string | undefined;
   publicUrl: string | undefined;
   /** Upper bound for a single msg_wait. */
   waitMaxSeconds: number;
   /** Interval for MCP progress notifications while msg_wait is suspended. */
   heartbeatSeconds: number;
+  /** Maximum content characters returned by one msg_wait or sync error. */
+  msgBatchMaxChars: number;
   /** Built Web UI directory, if any. */
   webRoot: string | undefined;
   limits: Limits;
@@ -52,9 +56,11 @@ export function loadConfig(
     dbPath:
       env.AGENTCOWORK_DB ??
       (mode === 'host' ? join(homedir(), '.agentcowork', 'host.db') : '/data/agentcowork.db'),
+    token: env.AGENTCOWORK_TOKEN || undefined,
     publicUrl: env.AGENTCOWORK_PUBLIC_URL || undefined,
     waitMaxSeconds: intEnv(env.AGENTCOWORK_WAIT_MAX_SECONDS, 240),
     heartbeatSeconds: intEnv(env.AGENTCOWORK_HEARTBEAT_SECONDS, 15),
+    msgBatchMaxChars: intEnv(env.AGENTCOWORK_MSG_BATCH_MAX_CHARS, 50_000),
     webRoot: env.AGENTCOWORK_WEB_ROOT || defaultWebRoot(),
     limits: {
       maxSessions: intEnv(env.AGENTCOWORK_MAX_SESSIONS, DEFAULT_LIMITS.maxSessions),
@@ -68,6 +74,10 @@ export function loadConfig(
   };
   const merged = { ...defaults, ...stripUndefined(overrides) };
   if (merged.waitMaxSeconds < 1) throw new Error('AGENTCOWORK_WAIT_MAX_SECONDS must be >= 1');
+  if (merged.msgBatchMaxChars < 1) throw new Error('AGENTCOWORK_MSG_BATCH_MAX_CHARS must be >= 1');
+  if (merged.token !== undefined && merged.token.trim() === '') {
+    throw new Error('AGENTCOWORK_TOKEN must not be empty');
+  }
   return merged;
 }
 

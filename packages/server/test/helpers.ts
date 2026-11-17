@@ -12,6 +12,7 @@ export function makeServices(
   opts: {
     waitMaxSeconds?: number;
     heartbeatSeconds?: number;
+    msgBatchMaxChars?: number;
     idlePauseMs?: number;
     limits?: Partial<Limits>;
   } = {},
@@ -20,6 +21,7 @@ export function makeServices(
     dbPath: ':memory:',
     waitMaxSeconds: opts.waitMaxSeconds ?? 2,
     heartbeatSeconds: opts.heartbeatSeconds ?? 0,
+    msgBatchMaxChars: opts.msgBatchMaxChars,
     idlePauseMs: opts.idlePauseMs,
     limits: opts.limits,
   });

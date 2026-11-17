@@ -10,7 +10,8 @@
   "files": [
     "dist",
     "drizzle",
-    "web"
+    "web",
+    "skill"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",

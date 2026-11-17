@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Api, clearToken, loadToken, saveToken } from './lib/api';
+import { ConnectPage } from './pages/ConnectPage';
 import { RoomList } from './pages/RoomList';
 import { RoomPage } from './pages/RoomPage';
 
@@ -51,6 +52,11 @@ export function App() {
     );
   }
 
+  const connect = /^#\/connect(?:\/(.+))?$/.exec(hash);
+  if (connect) {
+    const room = connect[1] ? decodeURIComponent(connect[1]) : undefined;
+    return <ConnectPage key={room ?? ''} token={token!} room={room} />;
+  }
   const room = /^#\/rooms\/(.+)$/.exec(hash)?.[1];
   return room ? (
     <RoomPage key={room} api={api} slug={decodeURIComponent(room)} />

@@ -1,4 +1,10 @@
-import { HumanPostInput, MsgListInput } from '@agentcowork/shared';
+import {
+  BoardKeySchema,
+  HumanPostInput,
+  MsgListInput,
+  RoomCreateInput,
+  StageSchema,
+} from '@agentcowork/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Services } from '../../app.js';
@@ -71,7 +77,55 @@ export function registerApi(
 
       api.get('/rooms', async () => services.rooms.list({ status: ['open', 'paused', 'closed'] }));
 
+      api.post('/rooms', async (req, reply) => {
+        const input = RoomCreateInput.parse(req.body);
+        const result = await services.rooms.create(req.principal!, input);
+        return reply.code(201).send({ room: result.room, participant_id: result.participant_id });
+      });
+
       api.get('/rooms/:room', async (req) => roomDetail(services, roomParam(req)));
+
+      api.post('/rooms/:room/stage', async (req) => {
+        const body = z
+          .object({ name: z.string().min(1).max(64).optional(), stage: StageSchema })
+          .parse(req.body);
+        return services.stages.setByHuman(
+          req.principal!,
+          roomParam(req),
+          body.name ?? 'Human',
+          body.stage,
+        );
+      });
+
+      api.post('/rooms/:room/pause', async (req) => {
+        const body = z.object({ name: z.string().min(1).max(64).optional() }).parse(req.body ?? {});
+        return services.stages.pauseByHuman(req.principal!, roomParam(req), body.name ?? 'Human');
+      });
+
+      api.post('/rooms/:room/resume', async (req) => {
+        const body = z.object({ name: z.string().min(1).max(64).optional() }).parse(req.body ?? {});
+        return services.stages.resumeByHuman(req.principal!, roomParam(req), body.name ?? 'Human');
+      });
+
+      api.post('/rooms/:room/close', async (req) => {
+        const body = z.object({ name: z.string().min(1).max(64).optional() }).parse(req.body ?? {});
+        return services.rooms.closeByHuman(req.principal!, roomParam(req), body.name ?? 'Human');
+      });
+
+      api.put('/rooms/:room/board/:key', async (req) => {
+        const { key } = req.params as { key: string };
+        const body = z
+          .object({
+            content: z.string().max(50_000),
+            base_version: z.number().int().min(0),
+          })
+          .parse(req.body);
+        return services.board.updateByHuman(req.principal!, roomParam(req), 'Human', {
+          key: BoardKeySchema.parse(key),
+          content: body.content,
+          base_version: body.base_version,
+        });
+      });
 
       api.get('/rooms/:room/messages', async (req) => {
         const q = req.query as Record<string, string | undefined>;

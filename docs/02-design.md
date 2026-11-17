@@ -1,6 +1,6 @@
 # 02 · 设计文档
 
-版本：v0.4 · 2026-10-22（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正；v0.7：资源上限；v0.8：离线检测、断线重连、离线提醒）
+版本：v1.0 · 2026-10-29（v0.2：M1 实现细节；v0.3：M2 的暂停状态、`@all` 广播、bug 阶段上限、注入边界格式、脱敏返回；v0.4：Web v0 与 REST 接口；v0.5：SSE 可续传与 nginx 实测结论；v0.6：代码审计后的修正；v0.7：资源上限；v0.8：离线检测、断线重连、离线提醒；v0.9：Host token 配置与 SQLite 在线备份；v1.0：重启接回验证与消息批次字符预算）
 
 ## 1. 目标与非目标
 
@@ -104,12 +104,12 @@ AgentCowork 的核心理念是**协同工作**：不是一个 AI 替代一个团
 
 | | Host 模式（个人当总线） | Server 模式（服务器总线） |
 |---|---|---|
-| 命令 | `npx agentcowork host` | `docker compose up -d`（内部执行 `agentcowork serve`） |
+| 命令 | 仓库内 `pnpm host`；发布包可用 `npx agentcowork host` | `docker compose -f deploy/docker-compose.yml up -d`（内部执行 `agentcowork serve`） |
 | 场景 | 临时讨论、排查 bug、试用、开发调试 | 团队长期使用 |
-| 认证 | 启动时生成邀请 token | GitLab OAuth 加个人访问令牌（PAT） |
+| 认证 | 默认启动时生成邀请 token；可用 `AGENTCOWORK_TOKEN` 或 `--token` 指定 | 当前为强制指定的共享 bootstrap token；GitLab OAuth 和个人访问令牌仍待实现 |
 | 存储 | `~/.agentcowork/host.db` | 数据卷 `/data/agentcowork.db`（后续可换 PostgreSQL） |
 | 监听 | 默认 `0.0.0.0:7420`，**强制要求 token** | 默认 `0.0.0.0:7420`，前置 HTTPS 反向代理 |
-| 可用性 | 主持人电脑下线，房间就不可用 | 7×24 在线 |
+| 可用性 | 主持人电脑下线，房间就不可用 | 可用 Docker 持续运行；当前仍是共享 token 预览版，完整多用户能力待 M3 |
 
 ### 5.1 Host 模式启动后的输出（示意）
 
@@ -117,18 +117,28 @@ AgentCowork 的核心理念是**协同工作**：不是一个 AI 替代一个团
 AgentCowork host is running
   Local:   http://127.0.0.1:7420
   LAN:     http://192.168.1.23:7420
-  Invite token: acw_host_9f3a...   (share with teammates)
+  Invite token: acw_host_9f3a...   (share with teammates; set AGENTCOWORK_TOKEN to keep it across restarts)
 
 Add to Claude Code:
   claude mcp add --transport http agentcowork http://192.168.1.23:7420/mcp \
     --header "Authorization: Bearer acw_host_9f3a..."
 ```
 
-### 5.2 房间迁移
+### 5.2 Host 数据备份
+
+Host 使用 SQLite 文件保存房间、消息和 Board。Hub 运行期间可以用 SQLite 的在线备份接口复制一致的数据库快照：
+
+```bash
+agentcowork backup --db ~/.agentcowork/host.db --output ./backups/host-$(date +%Y%m%d-%H%M%S).db
+```
+
+备份文件应存放在 Hub 数据目录之外并限制文件权限。恢复时先停止 Hub，将备份复制到新的数据库路径，再用 `--db` 或 `AGENTCOWORK_DB` 启动；MCP session、挂起的 `msg_wait` 和内存事件流不会从备份恢复，客户端需要重新连接并用原 `participant_id` 接回身份。
+
+### 5.3 房间迁移
 
 `agentcowork export <room>` 导出 JSON（房间、参与者、消息、Board），`agentcowork import <file>` 导入到另一个 Hub。典型用法：先在 Host 模式下临时讨论，发现需要长期跟进时，导入到 Server 继续。
 
-### 5.3 配置项（环境变量）
+### 5.4 配置项（环境变量）
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -138,9 +148,11 @@ Add to Claude Code:
 | `AGENTCOWORK_PUBLIC_URL` | 自动检测 | 生成 MCP 配置和 OAuth 回调时使用 |
 | `AGENTCOWORK_AUTH` | 按模式区分 | `token` / `gitlab` |
 | `GITLAB_URL` / `GITLAB_CLIENT_ID` / `GITLAB_CLIENT_SECRET` | – | 私有 GitLab 的 OAuth 应用配置 |
-| `AGENTCOWORK_BIND` | `0.0.0.0` | 监听地址，等同于 `--bind` |
+| `AGENTCOWORK_BIND` | `0.0.0.0` | 监听地址，等同于 `--bind`。不可信网络应使用 `127.0.0.1` 或 HTTPS 反向代理 |
+| `AGENTCOWORK_TOKEN` | Host 每次启动随机生成；Server 必须指定 | Host/Server 的共享 bearer token；只在 Hub 进程内校验，设置后可跨重启继续使用。Server 预览版没有个人 token 或吊销能力。不要把 token 提交到仓库 |
 | `AGENTCOWORK_WAIT_MAX_SECONDS` | `240` | 单次 `msg_wait` 最长阻塞时间 |
 | `AGENTCOWORK_HEARTBEAT_SECONDS` | `15` | `msg_wait` 挂起期间发送 progress 通知的间隔 |
+| `AGENTCOWORK_MSG_BATCH_MAX_CHARS` | `50000` | 单次 `msg_wait` / 同步冲突最多返回的消息内容字符数；超过后用 `msg_list` 或下一次 `msg_wait` 分页 |
 | `AGENTCOWORK_LOG` | 不输出 | HTTP 日志级别（如 `info`），用于排查 |
 | `AGENTCOWORK_MAX_SESSIONS` | `200` | 同时存在的 MCP 会话上限。满了先回收最久没有工具调用的会话（客户端常驻的 GET 流不算忙），全部都在调用中则返回 503 |
 | `AGENTCOWORK_MAX_WAITERS` | `1000` | 全局同时挂起的 `msg_wait` 上限 |
@@ -274,8 +286,8 @@ msg_wait({
   only_when_mentioned?: boolean // true 时，只有 @ 自己（或自己的角色）、阶段变更（M2）、人类发言才会唤醒；
                                 //   唤醒后返回 after_seq 之后的全部消息，而不只是 @ 自己的那条
 }) → {
-  messages: Message[],          // 不包含自己发的消息；单次最多 50 条
-  has_more: boolean,            // 还有更多消息时为 true，用 sync.current_seq 再调一次
+  messages: Message[],          // 不包含自己发的消息；单次最多 50 条和 50000 个内容字符
+  has_more: boolean,            // 还有更多消息时为 true，用返回 sync 的 current_seq 继续分页
   timed_out: boolean,
   sync: { current_seq, reply_token }, // current_seq 是本次已覆盖到的最大 seq，而不一定是房间最新 seq
   stage, room_status, members_status, // 例如：后端 waiting，App offline
@@ -407,7 +419,7 @@ room_join
 | 威胁 | 对策 | 版本 |
 |---|---|---|
 | 内网中无关的人访问房间 | Server 模式必须用 GitLab OAuth 登录；房间权限可以关联 GitLab 项目成员 | v1 |
-| 令牌泄露 | 只存哈希；可以吊销；记录最后使用时间；Host 模式的 token 在进程重启后失效 | v1 |
+| 令牌泄露 | 只存哈希；Server 模式可以吊销；Host 模式默认每次启动随机生成，也可由管理员通过环境变量或 CLI 指定并自行保管 | v1 |
 | 明文传输被抓包 | 部署文档要求前置 HTTPS（内部证书） | v1 |
 | 讨论内容中带有密钥或个人数据 | 发言、写入 Board 时对常见密钥格式（AWS、GitLab / GitHub token、Slack、`sk-` API key、私钥、JWT、URL 中的密码、AgentCowork 自己的 token）脱敏，替换为 `[REDACTED:<类型>]`，并在返回的 `redacted` 字段中提示发言者 | v1 |
 | **agent 之间的提示词注入** | 见 10.2 | v1 |
@@ -430,7 +442,7 @@ room_join
 ## 11. 认证流程
 
 ### 11.1 Host 模式
-启动时生成 `acw_host_<random>`，持有者即可连接，并在 `room_join` 时自报显示名。
+默认启动时生成 `acw_host_<random>`，持有者即可连接，并在 `room_join` 时自报显示名。管理员也可以通过 `AGENTCOWORK_TOKEN` 或 `host --token` 指定 token，以便 Hub 重启后继续使用已有客户端配置；这个 token 仍是共享 bearer 凭据，必须自行保管，Host 模式没有单独吊销某个成员的能力。
 
 ### 11.2 Server 模式
 1. 人在 Web 上用 GitLab OAuth 登录（私有 GitLab 作为 OAuth Provider，scope 为 `read_user openid`）
@@ -446,10 +458,13 @@ room_join
   - 左侧：Thread 实时消息流（SSE 推送），可以按角色筛选，人也能发言
   - 右侧：Board 分 section 展示，可以编辑，可以查看修改历史
   - 顶部：阶段进度条、成员和状态（在听 / 思考中 / 离线）、"推进阶段""暂停""关闭"按钮
+- 接入页（`#/connect`，房间页带房间号进入 `#/connect/<slug>`）：选择客户端（Claude Code / Codex）、角色和房间，按步骤给出可直接复制的 MCP 配置、行为规范安装命令和对 agent 说的第一句话。地址取自页面所在的 origin，令牌默认打码显示，复制时用原文
 - 我的令牌页（Server 模式）
 - 房间导出
 
-**M2 已实现（Web v0）**：房间列表、房间页（Thread 实时流加按角色筛选、Board 只读加修改历史、阶段进度条、成员状态和 ready 标记、暂停提示）、人类发言（发言、提问、决定三种类型，用 `@角色` 指定对象）。新建房间、编辑 Board、推进阶段、暂停和关闭按钮放到 M3。
+**当前已实现**：房间列表、创建房间、接入页、房间页（Thread 实时流、Board 编辑和修改历史、阶段进度条、成员状态和 ready 标记、暂停提示）、人类发言、人工推进阶段、暂停/恢复和关闭房间。Server 模式登录、权限和踢人仍在 M3。
+
+**行为规范下载**：Hub 在 `GET /skill/agentcowork/SKILL.md`、`GET /skill/agentcowork/scripts/repo-info.sh`、`GET /skill/prompt.md` 公开提供这三个文件（不需要令牌，内容只有行为规范和 git 信息脚本），接入页据此给出一行安装命令。只放行这三个固定路径，不提供目录浏览。
 
 ### 12.1 REST 接口（`/api`，M2）
 
@@ -458,14 +473,19 @@ room_join
 | `GET /api/rooms` | 房间列表（open、paused、closed） |
 | `GET /api/rooms/:room` | 房间详情：摘要、阶段列表、暂停原因、成员（含 ready）、Board 全部 section |
 | `GET /api/rooms/:room/messages?after_seq&before_seq&limit` | 分页读取消息，语义同 `msg_list` |
+| `POST /api/rooms` | 人类创建房间 `{ title, type, requirement?, role: "product" }`，创建者作为 Host |
 | `POST /api/rooms/:room/messages` | 人类发言 `{ name, content, kind, mentions? }`：不做严格同步，唤醒所有等待者，并恢复暂停的房间 |
+| `POST /api/rooms/:room/stage` | 人工推进或回退阶段 `{ name?, stage }` |
+| `POST /api/rooms/:room/pause` / `resume` | 人工暂停或恢复房间 `{ name? }` |
+| `PUT /api/rooms/:room/board/:key` | 人工以 `base_version` 乐观锁更新 Board section |
+| `POST /api/rooms/:room/close` | 人工关闭房间 `{ name? }` |
 | `GET /api/rooms/:room/board/:key/history` | Board section 的历史版本 |
 | `GET /api/rooms/:room/events` | SSE：`ready`、`message`（新消息）、`members`（成员状态变化），每 15 秒发送注释帧保活 |
 
 - 认证与 MCP 相同，**只接受** `Authorization: Bearer` 请求头。浏览器原生 EventSource 不能带请求头，前端用 fetch 读取 SSE 流。不接受 URL 中的 `?token=`，避免 token 进入代理日志和浏览器历史
 - 错误码映射为 HTTP 状态：`NOT_FOUND` 404、`FORBIDDEN` 403、`INVALID_ARGUMENT` 400、冲突类 409、`LIMIT_REACHED` 429
 - REST 返回原文，不加注入边界（边界只针对 agent）；前端用 react-markdown 渲染，不渲染原始 HTML，避免 XSS
-- Host 模式启动输出中的 Web 链接形如 `http://<地址>/#token=<token>`：token 放在 hash 中，不会出现在服务端日志和 Referer 里；前端读取后存入 localStorage 并从地址栏去掉。Host 重启后 token 失效，前端收到 401 时会清除旧 token 并提示重新输入
+- Host 模式启动输出中的 Web 链接形如 `http://<地址>/#token=<token>`：token 放在 hash 中，不会出现在服务端日志和 Referer 里；前端读取后存入 localStorage 并从地址栏去掉。默认随机 token 在 Host 重启后失效；使用 `AGENTCOWORK_TOKEN` 或 `--token` 时可以继续使用，前端收到 401 时会清除旧 token 并提示重新输入
 
 ## 13. 技术选型
 

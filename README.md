@@ -13,7 +13,7 @@
 
 ## 状态
 
-🚧 M1（讨论核心）和 M2（结论板、阶段机、防注入、Skill、Web v0）代码已完成，等待真实客户端验收（见 [docs/03-roadmap.md](docs/03-roadmap.md)）。Agent 行为规范见 [skill/](skill/)。
+✅ Host 模式核心链路已完成，并已用 Claude Code 与 Codex 做过真实客户端验证：可以在本机或可信局域网里让多个 agent 进入同一个房间讨论。M1 仍有 10 轮以上长讨论、Cursor/Gemini CLI 等待验证项；Server 已有共享 bootstrap token 的 Docker/serve 预览版，GitLab OAuth 和个人权限尚未实现。详细状态见 [docs/03-roadmap.md](docs/03-roadmap.md) 和 [docs/05-client-compat.md](docs/05-client-compat.md)。Agent 行为规范见 [skill/](skill/)。
 
 ## 开发
 
@@ -38,16 +38,43 @@ pnpm build
 | [docs/04-agent-skill.md](docs/04-agent-skill.md) | 接入房间的 agent 行为规范（定稿见 [skill/](skill/)） |
 | [docs/05-client-compat.md](docs/05-client-compat.md) | 客户端与反向代理兼容性实测 |
 
-## 快速预览（规划中）
+## 快速开始
+
+当前从源码运行 Host 模式：
 
 ```bash
-# Host 模式：在自己电脑上临时开一个总线
-npx agentcowork host
+pnpm install
+pnpm build
+pnpm host
 # → 打印局域网地址、邀请 token、可直接复制的 MCP 配置
-
-# Server 模式：部署到内网服务器
-docker compose up -d
 ```
+
+默认 token 每次启动随机生成。如果希望重启 Hub 后继续使用已有的客户端配置，可以在启动前指定 token：
+
+```bash
+export AGENTCOWORK_TOKEN='acw_host_replace-with-a-secret'
+pnpm host
+```
+
+也可以直接使用构建后的 CLI：`node packages/server/dist/cli.js host --token "$AGENTCOWORK_TOKEN"`。npm 包仍在规划中，当前不能使用 `npx agentcowork host`。Server 预览版可以用 Docker Compose 启动，但只提供共享 bootstrap token，不提供 GitLab 登录、个人 token 或成员权限。
+
+Server 预览版启动前先设置共享 token：
+
+```bash
+export AGENTCOWORK_TOKEN="$(openssl rand -hex 32)"
+AGENTCOWORK_PUBLIC_URL=https://hub.example.internal docker compose -f deploy/docker-compose.yml up -d
+curl https://hub.example.internal/healthz
+```
+
+这个预览版只适合可信内网并建议放在 HTTPS 反向代理后面；它还没有 GitLab OAuth、个人 token 和成员权限。Host 数据库可以在运行期间做一致性备份：
+
+```bash
+node packages/server/dist/cli.js backup \
+  --db "$HOME/.agentcowork/host.db" \
+  --output "./backups/host-$(date +%Y%m%d-%H%M%S).db"
+```
+
+恢复前先停止 Hub，把备份文件复制到新的数据库路径，再用 `AGENTCOWORK_DB` 启动。MCP 会话和挂起的等待不会从备份恢复；客户端需要重新连接，并在 `room_join` 中使用原来的 `participant_id` 接回身份。
 
 ```bash
 # 在自己的 worktree 里给 agent 接入（以 Claude Code 为例）

@@ -30,7 +30,7 @@ export function hostBanner({ port, bind, token, publicUrl, dbPath, hasWeb }: Ban
     'AgentCowork host is running',
     `  Local:   ${local}`,
     ...lan.map((ip) => `  LAN:     http://${ip}:${port}`),
-    `  Invite token: ${token}   (share with teammates; valid until this process exits)`,
+    `  Invite token: ${token}   (shared bearer credential; set AGENTCOWORK_TOKEN to keep it across restarts)`,
     `  Database: ${dbPath}`,
     ...(hasWeb
       ? [`  Web UI:  ${shareBase.replace(/\/$/, '')}/#token=${token}`]

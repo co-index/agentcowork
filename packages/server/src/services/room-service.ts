@@ -128,6 +128,21 @@ export class RoomService {
     return this.joinResult(room, participant);
   }
 
+  async closeByHuman(principal: Principal, roomRef: string, name: string): Promise<{ ok: true }> {
+    const room = await this.access.requireRoom(roomRef);
+    return this.thread.lock(room.id, async () => {
+      const fresh = (await this.repo.findRoom(room.id)) ?? room;
+      if (fresh.status === 'closed' || fresh.status === 'archived') {
+        throw new AppError('ROOM_CLOSED', `Room is ${fresh.status}`);
+      }
+      await this.repo.updateRoom(room.id, { status: 'closed', closedAt: this.clock.now() });
+      await this.thread.systemLocked(room.id, `Room closed by ${name || principal.name}.`, {
+        broadcast: true,
+      });
+      return { ok: true as const };
+    });
+  }
+
   async leave(principal: Principal, input: RoomLeaveInput): Promise<{ ok: true }> {
     const { room, participant } = await this.access.requireParticipant(
       principal,

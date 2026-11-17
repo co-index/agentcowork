@@ -34,6 +34,22 @@ export function openSqliteRepository(path: string): SqliteRepository {
   return new SqliteRepository(sqlite, db);
 }
 
+/** Copies a consistent SQLite snapshot while the source database may be in use. */
+export async function backupSqliteDatabase(
+  sourcePath: string,
+  destinationPath: string,
+): Promise<void> {
+  if (sourcePath === ':memory:') throw new Error('Cannot back up an in-memory database');
+  if (sourcePath === destinationPath) throw new Error('Backup destination must differ from source');
+  mkdirSync(dirname(destinationPath), { recursive: true });
+  const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
+  try {
+    await source.backup(destinationPath);
+  } finally {
+    source.close();
+  }
+}
+
 export class SqliteRepository implements Repository {
   constructor(
     private readonly sqlite: Database.Database,

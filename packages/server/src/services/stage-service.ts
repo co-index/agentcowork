@@ -53,6 +53,35 @@ export class StageService {
     return this.set({ kind: 'human', principal, name }, room, stage);
   }
 
+  async pauseByHuman(principal: Principal, roomRef: string, name: string) {
+    const room = await this.access.requireRoom(roomRef);
+    return this.thread.lock(room.id, async () => {
+      const fresh = (await this.repo.findRoom(room.id)) ?? room;
+      if (fresh.status === 'closed' || fresh.status === 'archived') {
+        throw new AppError('ROOM_CLOSED', `Room is ${fresh.status}`);
+      }
+      if (fresh.status === 'paused') return { status: 'paused' as const };
+      await this.pauseLocked(fresh, `paused by ${name || principal.name}`);
+      return { status: 'paused' as const };
+    });
+  }
+
+  async resumeByHuman(principal: Principal, roomRef: string, name: string) {
+    const room = await this.access.requireRoom(roomRef);
+    return this.thread.lock(room.id, async () => {
+      const fresh = (await this.repo.findRoom(room.id)) ?? room;
+      if (fresh.status === 'closed' || fresh.status === 'archived') {
+        throw new AppError('ROOM_CLOSED', `Room is ${fresh.status}`);
+      }
+      if (fresh.status !== 'paused') return { status: fresh.status as 'open' };
+      await this.resumeLocked(fresh);
+      await this.thread.systemLocked(room.id, `Room resumed by ${name || principal.name}.`, {
+        broadcast: true,
+      });
+      return { status: 'open' as const };
+    });
+  }
+
   /** Moves the room to `stage` (forward or back). Also resumes a paused room. */
   async set(actor: Actor, room: Room, stage: Stage): Promise<{ stage: Stage; previous: Stage }> {
     if (actor.kind === 'agent' && room.hostParticipantId !== actor.participant.id) {

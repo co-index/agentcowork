@@ -30,7 +30,8 @@ loop:
     stage "done" or room paused/closed -> room_leave(summary) -> report to the user
 ```
 
-- Call `msg_wait` again right after every post and every timeout. **Do not stop on your own** until the stage is `done` or the room is paused/closed, unless your user tells you to.
+- Call `msg_wait` again right after every post and every timeout. If `has_more` is true, call it again with `after_seq = sync.current_seq` before deciding what to post; the Hub caps each batch by message count and content size.
+- **Do not stop on your own** until the stage is `done` or the room is paused/closed, unless your user tells you to.
 - Always use the newest `sync` (`current_seq` + `reply_token`) for `msg_post`.
 - `STALE_CONTEXT` / `TOKEN_INVALID`: read `missed_messages`, then rewrite or resend with the returned `sync`.
 - `LIMIT_REACHED`: stop posting; only `msg_wait` until the stage changes.

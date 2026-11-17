@@ -35,6 +35,7 @@ export interface ServiceOptions {
   dbPath: string;
   waitMaxSeconds: number;
   heartbeatSeconds: number;
+  msgBatchMaxChars?: number;
   /** Override the 30-minute idle pause (tests). */
   idlePauseMs?: number;
   limits?: Partial<Limits>;
@@ -60,6 +61,7 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
     waits,
     config.waitMaxSeconds,
     clock,
+    config.msgBatchMaxChars,
   );
   return { repo, bus, access, rooms, messages, board, stages, thread, waits };
 }

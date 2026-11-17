@@ -123,6 +123,32 @@ describe('MessageService', () => {
       );
     });
 
+    it('limits a batch by content size without truncating messages', async () => {
+      await closeServices(s);
+      s = makeServices({ msgBatchMaxChars: 10 });
+      const { host, guest } = await roomWithTwo(s);
+      const afterSeq = guest.sync.current_seq;
+      let sync = guest.sync;
+      sync = (await post(s, bob, guest, sync, '1234567890')).sync;
+      sync = (await post(s, bob, guest, sync, 'second')).sync;
+      const first = await s.messages.wait(alice, {
+        room: 'REQ-1',
+        participant_id: host.participant_id,
+        after_seq: afterSeq,
+      });
+      expect(first.messages.map((m) => m.content)).toEqual(['1234567890']);
+      expect(first.has_more).toBe(true);
+      expect(first.sync.current_seq).toBe(first.messages.at(-1)?.seq);
+
+      const second = await s.messages.wait(alice, {
+        room: 'REQ-1',
+        participant_id: host.participant_id,
+        after_seq: first.sync.current_seq,
+      });
+      expect(second.messages.map((m) => m.content)).toEqual(['second']);
+      expect(second.has_more).toBe(false);
+    });
+
     it('is woken by a new message from someone else', async () => {
       const { host, guest } = await roomWithTwo(s);
       const waiting = s.messages.wait(bob, {
