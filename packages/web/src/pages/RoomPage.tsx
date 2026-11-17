@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Board } from '../components/Board';
 import { Composer } from '../components/Composer';
 import { Members } from '../components/Members';
+import { PendingQuestions } from '../components/PendingQuestions';
 import { RoomControls } from '../components/RoomControls';
 import { StageBar } from '../components/StageBar';
 import { Thread } from '../components/Thread';
@@ -43,8 +44,10 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
         onOpen: () => setLive(true),
         onMessage: (m) => {
           setMessages((cur) => mergeMessages(cur, [m]));
-          // System messages announce joins, stage changes, board edits and pauses.
-          if (m.sender_type === 'system') void refreshDetail();
+          // System messages announce joins, stage changes, board edits and pauses;
+          // questions and replies change the pending-question list.
+          if (m.sender_type === 'system' || m.kind === 'question' || m.reply_to_seq !== null)
+            void refreshDetail();
         },
         onMembers: () => void refreshDetail(),
       },
@@ -117,6 +120,7 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
           </p>
         )}
         <Members members={detail.members} hostId={room.host?.participant_id} />
+        <PendingQuestions questions={detail.pending_questions} members={detail.members} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[3fr_2fr] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-1">
         <div className="flex min-h-0 min-w-0 flex-col border-b border-zinc-200 lg:border-r lg:border-b-0 dark:border-zinc-800">

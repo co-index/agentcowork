@@ -1,7 +1,8 @@
-import type { MemberStatusView, Stage, StageSetInput } from '@agentcowork/shared';
+import type { AbsentMemberView, MemberStatusView, Stage, StageSetInput } from '@agentcowork/shared';
 import { AppError } from '../domain/errors.js';
 import {
   actorLabel,
+  WEB_CLIENT,
   type Actor,
   type Message,
   type Participant,
@@ -15,8 +16,10 @@ import {
   nextStage,
   ROOM_MESSAGE_BUDGET,
   speakingLimit,
+  stagesFor,
 } from '../domain/stages.js';
 import type { Clock, Repository } from './ports.js';
+import { owes, type Questions } from './questions.js';
 import { STAGE_GUIDANCE } from './rules.js';
 import type { Thread } from './thread.js';
 import { toMemberStatus } from './views.js';
@@ -35,6 +38,7 @@ export class StageService {
     private readonly repo: Repository,
     private readonly access: Access,
     private readonly thread: Thread,
+    private readonly questions: Questions,
     private readonly clock: Clock,
     private readonly idlePauseMs = IDLE_PAUSE_MS,
   ) {}
@@ -45,12 +49,20 @@ export class StageService {
       input.room,
       input.participant_id,
     );
-    return this.set({ kind: 'agent', principal, participant }, room, input.stage);
+    return this.set({ kind: 'agent', principal, participant }, room, input.stage, {
+      allowAbsent: input.allow_absent,
+    });
   }
 
-  async setByHuman(principal: Principal, roomRef: string, name: string, stage: Stage) {
+  async setByHuman(
+    principal: Principal,
+    roomRef: string,
+    name: string,
+    stage: Stage,
+    opts: { allowAbsent?: boolean } = {},
+  ) {
     const room = await this.access.requireRoom(roomRef);
-    return this.set({ kind: 'human', principal, name }, room, stage);
+    return this.set({ kind: 'human', principal, name }, room, stage, opts);
   }
 
   async pauseByHuman(principal: Principal, roomRef: string, name: string) {
@@ -82,8 +94,16 @@ export class StageService {
     });
   }
 
-  /** Moves the room to `stage` (forward or back). Also resumes a paused room. */
-  async set(actor: Actor, room: Room, stage: Stage): Promise<{ stage: Stage; previous: Stage }> {
+  /**
+   * Moves the room to `stage` (forward or back). Also resumes a paused room.
+   * Moving forward while members are offline needs `allowAbsent` (design 9.2).
+   */
+  async set(
+    actor: Actor,
+    room: Room,
+    stage: Stage,
+    opts: { allowAbsent?: boolean } = {},
+  ): Promise<{ stage: Stage; previous: Stage }> {
     if (actor.kind === 'agent' && room.hostParticipantId !== actor.participant.id) {
       throw new AppError('FORBIDDEN', 'Only the host may change the stage');
     }
@@ -96,6 +116,10 @@ export class StageService {
     return this.thread.lock(room.id, async () => {
       room = (await this.repo.findRoom(room.id)) ?? room;
       const previous = room.stage;
+      const order = stagesFor(room.type);
+      const forward = order.indexOf(stage) > order.indexOf(previous);
+      const absent = forward ? await this.absentMembers(room) : [];
+      if (absent.length > 0 && !opts.allowAbsent) throw absentError(absent);
       const currentSeq = await this.repo.currentSeq(room.id);
       const settings = { ...(room.settings as StageSettings) };
       delete settings.pauseReason;
@@ -109,9 +133,12 @@ export class StageService {
       const resumed = room.status === 'paused' ? ' The room is resumed.' : '';
       const change =
         previous === stage ? `Stage stays "${stage}".` : `Stage changed: ${previous} → ${stage}.`;
+      const without = absent.length
+        ? ` Moved on while offline: ${absent.map((m) => m.display_name).join(', ')}.`
+        : '';
       await this.thread.systemLocked(
         room.id,
-        `${change}${resumed} (by ${actorLabel(actor)})\n\n${STAGE_GUIDANCE[stage]}`,
+        `${change}${resumed}${without} (by ${actorLabel(actor)})\n\n${STAGE_GUIDANCE[stage]}`,
         { broadcast: true },
       );
       return { stage, previous };
@@ -210,6 +237,23 @@ export class StageService {
       .map((m) => ({ ...toMemberStatus(m), ready: ready.has(m.id) }));
   }
 
+  /** Offline members with the questions they still owe; they block moving forward. */
+  async absentMembers(room: Room): Promise<AbsentMemberView[]> {
+    // A Web-created seat has no agent behind it; its human is not "absent" from the discussion.
+    const offline = (await this.repo.listParticipants(room.id)).filter(
+      (m) => m.status === 'offline' && m.client?.name !== WEB_CLIENT,
+    );
+    if (offline.length === 0) return [];
+    const pending = await this.questions.pending(room.id);
+    return offline.map((m) => ({
+      participant_id: m.id,
+      display_name: m.displayName,
+      role: m.role,
+      last_seen_at: new Date(m.lastSeenAt).toISOString(),
+      pending_question_seqs: pending.filter((q) => owes(q, m)).map((q) => q.message.seq),
+    }));
+  }
+
   pauseReason(room: Room): string | undefined {
     return (room.settings as StageSettings).pauseReason;
   }
@@ -232,4 +276,21 @@ export class StageService {
     const members = await this.repo.listParticipants(roomId);
     return members.filter((m) => m.status === 'online' || m.status === 'waiting');
   }
+}
+
+function absentError(absent: AbsentMemberView[]): AppError {
+  const who = absent
+    .map((m) => {
+      const owed = m.pending_question_seqs.length
+        ? `, still owes answers to seq ${m.pending_question_seqs.join(', ')}`
+        : '';
+      return `${m.display_name} (${m.role}${owed})`;
+    })
+    .join('; ');
+  return new AppError(
+    'MEMBERS_OFFLINE',
+    `Offline: ${who}. Moving on would leave them out. Wait for them or ask a human; or record ` +
+      'their open items in open_questions and retry with allow_absent=true.',
+    { offline: absent },
+  );
 }

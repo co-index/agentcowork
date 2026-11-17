@@ -1,4 +1,4 @@
-import type { MessageView } from '@agentcowork/shared';
+import type { AbsentMemberView, MemberView, MessageView } from '@agentcowork/shared';
 
 /** Position of `current` in the stage list, for the progress bar. */
 export function stageProgress(stages: readonly string[], current: string) {
@@ -81,3 +81,40 @@ export const STATUS_LABELS: Record<string, string> = {
   offline: '离线',
   left: '已离开',
 };
+
+/** How long a member has been away: "离线 12 分钟", "离线 3 小时", "离线 2 天". */
+export function offlineFor(lastSeenIso: string, now = Date.now()): string {
+  const minutes = Math.max(1, Math.floor((now - Date.parse(lastSeenIso)) / 60_000));
+  if (minutes < 60) return `离线 ${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `离线 ${hours} 小时`;
+  return `离线 ${Math.floor(hours / 24)} 天`;
+}
+
+/** Display name for a mention target (participant id or role); roles stay as they are. */
+export function targetLabel(
+  target: string,
+  members: Pick<MemberView, 'participant_id' | 'display_name'>[],
+): string {
+  return members.find((m) => m.participant_id === target)?.display_name ?? target;
+}
+
+/** Confirmation text before moving a stage forward while members are offline. */
+export function absentConfirmText(
+  stage: string,
+  offline: AbsentMemberView[],
+  now = Date.now(),
+): string {
+  const lines = offline.map((m) => {
+    const owed = m.pending_question_seqs.length
+      ? `，还有 ${m.pending_question_seqs.length} 个点名的问题没回答（#${m.pending_question_seqs.join('、#')}）`
+      : '';
+    return `· ${m.display_name}（${m.role}）${offlineFor(m.last_seen_at, now)}${owed}`;
+  });
+  return [
+    `以下成员不在线，推进到「${STAGE_LABELS[stage] ?? stage}」后这些成员的意见会缺席：`,
+    ...lines,
+    '',
+    '建议先把没回答的问题记进结论板 open_questions。仍要推进吗？',
+  ].join('\n');
+}

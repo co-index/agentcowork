@@ -1,5 +1,5 @@
 import type { RoomDetail } from '../lib/api';
-import { roleColor, STATUS_LABELS } from '../lib/format';
+import { offlineFor, roleColor, STATUS_LABELS } from '../lib/format';
 
 const DOT: Record<string, string> = {
   waiting: 'bg-emerald-500',
@@ -21,7 +21,11 @@ export function Members({ members, hostId }: { members: RoomDetail['members']; h
           <span className={`size-2 rounded-full ${DOT[m.status] ?? 'bg-zinc-400'}`} />
           <span className="font-medium">{m.display_name}</span>
           <span className={`rounded px-1.5 py-0.5 text-xs ${roleColor(m.role)}`}>{m.role}</span>
-          <span className="text-xs text-zinc-500">{STATUS_LABELS[m.status] ?? m.status}</span>
+          <span className="text-xs text-zinc-500" title={`最后活动：${m.last_seen_at}`}>
+            {m.status === 'offline'
+              ? offlineFor(m.last_seen_at)
+              : (STATUS_LABELS[m.status] ?? m.status)}
+          </span>
           {m.participant_id === hostId && <span className="text-xs text-zinc-500">· 主持人</span>}
           {m.ready && (
             <span className="text-xs text-emerald-600 dark:text-emerald-400" title="本阶段已 ready">

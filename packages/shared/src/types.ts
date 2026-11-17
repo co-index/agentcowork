@@ -32,6 +32,8 @@ export interface MemberView {
   status: ParticipantStatus;
   repo: RepoInfo | null;
   client: ClientInfo | null;
+  /** Last request from this participant's agent (ISO). */
+  last_seen_at: string;
 }
 
 export interface RoomView {
@@ -89,6 +91,22 @@ export interface JoinResult {
     since_seq: number;
     hint: string;
   };
+  /** Questions that mention this participant (or its role) and are still unanswered. */
+  pending_questions?: MessageView[];
+}
+
+/** An unanswered question plus the mention targets that still owe a reply (Web only). */
+export interface PendingQuestionView extends MessageView {
+  waiting_on: string[];
+}
+
+/** An offline member blocking a forward stage change (MEMBERS_OFFLINE). */
+export interface AbsentMemberView {
+  participant_id: string;
+  display_name: string;
+  role: Role;
+  last_seen_at: string;
+  pending_question_seqs: number[];
 }
 
 export interface WaitResult {

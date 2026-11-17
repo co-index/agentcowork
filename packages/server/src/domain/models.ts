@@ -91,6 +91,9 @@ export interface Principal {
   scope: 'host' | 'personal';
 }
 
+/** client.name of the seat a human gets when creating a room in the Web UI (no agent behind it). */
+export const WEB_CLIENT = 'web';
+
 /** Mention that addresses every participant. */
 export const BROADCAST = '@all';
 

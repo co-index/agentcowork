@@ -4,12 +4,13 @@ import {
   MsgListInput,
   RoomCreateInput,
   StageSchema,
+  type PendingQuestionView,
 } from '@agentcowork/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Services } from '../../app.js';
 import { AppError } from '../../domain/errors.js';
-import type { Principal } from '../../domain/models.js';
+import { WEB_CLIENT, type Principal } from '../../domain/models.js';
 import { stagesFor } from '../../domain/stages.js';
 import type { AuthProvider } from '../../services/ports.js';
 import { nameIndex, toMemberView, toMessageView } from '../../services/views.js';
@@ -25,6 +26,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   TOKEN_INVALID: 409,
   ROOM_CLOSED: 409,
   ROOM_PAUSED: 409,
+  MEMBERS_OFFLINE: 409,
   LIMIT_REACHED: 429,
   TOO_MANY: 429,
 };
@@ -79,7 +81,11 @@ export function registerApi(
 
       api.post('/rooms', async (req, reply) => {
         const input = RoomCreateInput.parse(req.body);
-        const result = await services.rooms.create(req.principal!, input);
+        // The creator's seat is a human at a browser, not an agent (design 9.2).
+        const result = await services.rooms.create(req.principal!, {
+          ...input,
+          client: { name: WEB_CLIENT },
+        });
         return reply.code(201).send({ room: result.room, participant_id: result.participant_id });
       });
 
@@ -87,13 +93,18 @@ export function registerApi(
 
       api.post('/rooms/:room/stage', async (req) => {
         const body = z
-          .object({ name: z.string().min(1).max(64).optional(), stage: StageSchema })
+          .object({
+            name: z.string().min(1).max(64).optional(),
+            stage: StageSchema,
+            allow_absent: z.boolean().optional(),
+          })
           .parse(req.body);
         return services.stages.setByHuman(
           req.principal!,
           roomParam(req),
           body.name ?? 'Human',
           body.stage,
+          { allowAbsent: body.allow_absent },
         );
       });
 
@@ -162,6 +173,7 @@ async function roomDetail(services: Services, ref: string) {
   const members = await services.repo.listParticipants(room.id);
   const status = await services.stages.memberStatus(room, members);
   const ready = new Map(status.map((m) => [m.participant_id, m.ready]));
+  const names = nameIndex(members);
   return {
     room: await services.rooms.summarize(room),
     stages: stagesFor(room.type),
@@ -170,6 +182,12 @@ async function roomDetail(services: Services, ref: string) {
       .filter((m) => m.status !== 'left')
       .map((m) => ({ ...toMemberView(m), ready: ready.get(m.id) ?? false })),
     board: (await services.board.get({ room: room.id })).sections,
+    pending_questions: (await services.questions.pending(room.id)).map(
+      (q): PendingQuestionView => ({
+        ...toMessageView(q.message, names),
+        waiting_on: q.waitingOn,
+      }),
+    ),
   };
 }
 

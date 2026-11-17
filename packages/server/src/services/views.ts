@@ -31,6 +31,7 @@ export function toMemberView(p: Participant): MemberView {
     status: p.status,
     repo: p.repo,
     client: p.client,
+    last_seen_at: new Date(p.lastSeenAt).toISOString(),
   };
 }
 

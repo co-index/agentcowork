@@ -185,6 +185,66 @@ describe('MCP endpoint', () => {
     await Promise.all([host.close(), after.close()]);
   });
 
+  it('hands over questions asked while offline and guards stage_set (design 9.2)', async () => {
+    const host = await connect();
+    const created = await call<JoinResult>(host, 'room_create', {
+      title: 'absent',
+      role: 'backend',
+    });
+    const room = created.room.slug;
+    const before = await connect();
+    const joined = await call<JoinResult>(before, 'room_join', { room, role: 'frontend' });
+    await (before.transport as StreamableHTTPClientTransport).terminateSession();
+    await before.close();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const synced = await call<WaitResult>(host, 'msg_wait', {
+      room,
+      participant_id: created.participant_id,
+      after_seq: created.sync.current_seq,
+      timeout_seconds: 1,
+    });
+    const asked = await call<{ seq: number; notice?: string }>(host, 'msg_post', {
+      room,
+      participant_id: created.participant_id,
+      kind: 'question',
+      content: 'Which filters does the list page send?',
+      mentions: ['frontend'],
+      expected_last_seq: synced.sync.current_seq,
+      reply_token: synced.sync.reply_token,
+    });
+    expect(asked.notice).toMatch(/offline/);
+
+    const blocked = await call<{ offline: { pending_question_seqs: number[] }[] }>(
+      host,
+      'stage_set',
+      { room, participant_id: created.participant_id, stage: 'research' },
+    );
+    expect(blocked.error).toBe('MEMBERS_OFFLINE');
+    expect(blocked.offline[0]?.pending_question_seqs).toEqual([asked.seq]);
+
+    const after = await connect();
+    const back = await call<JoinResult & { untrusted_content_notice?: string }>(
+      after,
+      'room_join',
+      { room, role: 'frontend' },
+    );
+    expect(back.participant_id).toBe(joined.participant_id);
+    expect(back.pending_questions?.map((m) => m.seq)).toEqual([asked.seq]);
+    // Question text comes from another participant, so it is fenced like any message.
+    expect(back.pending_questions?.[0]?.content).toMatch(/^<room-content nonce="[^"]+" seq=/);
+    expect(back.untrusted_content_notice).toBeDefined();
+
+    // Everyone is back online: the host may move on without allow_absent.
+    const moved = await call(host, 'stage_set', {
+      room,
+      participant_id: created.participant_id,
+      stage: 'research',
+    });
+    expect(moved).toMatchObject({ stage: 'research', previous: 'briefing' });
+    await Promise.all([host.close(), after.close()]);
+  });
+
   it('three agents discuss concurrently without losing or duplicating messages', async () => {
     const ROUNDS = 5;
     const roles = ['backend', 'frontend', 'app'] as const;

@@ -55,6 +55,7 @@
 
 - [ ] `export` / `import` 房间迁移
 - [ ] agent 断线重连、Hub 重启后自动恢复会话（agent 侧已提前完成；Hub 重启后的自动化接回已验证：稳定 token + 新 MCP session + 原 `participant_id` 可恢复，旧 session 仍需客户端重新 initialize）
+- [x] 成员离线时的兜底（提前完成）：Hub 推算待回答问题，进房时交给对方；有成员离线时往后推进阶段需要确认；Web 显示离线时长和待回答问题（设计文档 9.2）
 - [ ] bug 房间模板和流程
 - [ ] 审计日志
 - [ ] 文档站，提供中英文 README

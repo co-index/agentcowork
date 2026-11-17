@@ -169,6 +169,13 @@ export type BoardUpdateInput = z.infer<typeof BoardUpdateInput>;
 export const StageSetInput = z.object({
   ...ParticipantRef,
   stage: StageSchema,
+  allow_absent: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true to move forward although some members are offline (after MEMBERS_OFFLINE). ' +
+        'Record their unanswered questions in open_questions first.',
+    ),
 });
 export type StageSetInput = z.infer<typeof StageSetInput>;
 

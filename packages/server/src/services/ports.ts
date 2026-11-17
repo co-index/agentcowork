@@ -42,6 +42,11 @@ export interface Repository {
     query: { afterSeq?: number; beforeSeq?: number; limit: number },
   ): Promise<Message[]>;
 
+  /** All kind=question messages of the room, ascending by seq. */
+  listQuestions(roomId: string): Promise<Message[]>;
+  /** Messages whose reply_to_seq is one of `seqs`, ascending by seq. */
+  listReplies(roomId: string, seqs: number[]): Promise<Message[]>;
+
   listBoard(roomId: string, keys?: string[]): Promise<BoardSection[]>;
   /**
    * Optimistic write: succeeds only if the stored version equals `baseVersion` (0 = new section).

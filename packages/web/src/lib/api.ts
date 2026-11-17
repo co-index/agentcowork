@@ -3,6 +3,7 @@ import type {
   ListResult,
   MemberView,
   MessageView,
+  PendingQuestionView,
   RoomSummaryView,
 } from '@agentcowork/shared';
 import { SseParser } from './sse';
@@ -66,6 +67,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Extra fields of the error body, e.g. `offline` for MEMBERS_OFFLINE. */
+    readonly data: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -77,6 +80,7 @@ export interface RoomDetail {
   pause_reason: string | null;
   members: (MemberView & { ready: boolean })[];
   board: Record<string, BoardSectionView>;
+  pending_questions: PendingQuestionView[];
 }
 
 export class Api {
@@ -119,10 +123,14 @@ export class Api {
     });
   }
 
-  setStage(slug: string, stage: string, name: string) {
+  /** Fails with MEMBERS_OFFLINE when moving forward past offline members, unless allowAbsent. */
+  setStage(slug: string, stage: string, name: string, allowAbsent = false) {
     return this.request<{ stage: string; previous: string }>(
       `/api/rooms/${encodeURIComponent(slug)}/stage`,
-      { method: 'POST', body: JSON.stringify({ stage, name }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ stage, name, ...(allowAbsent ? { allow_absent: true } : {}) }),
+      },
     );
   }
 
@@ -208,9 +216,14 @@ export class Api {
       },
     });
     if (res.status === 401) this.onUnauthorized();
-    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-    if (!res.ok)
-      throw new ApiError(res.status, body.error ?? 'HTTP', body.message ?? res.statusText);
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+    } & Record<string, unknown>;
+    if (!res.ok) {
+      const { error, message, ...data } = body;
+      throw new ApiError(res.status, error ?? 'HTTP', message ?? res.statusText, data);
+    }
     return body as T;
   }
 }

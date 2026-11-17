@@ -269,14 +269,15 @@ room_join({
 }) → {
   participant_id,
   room: { slug, title, type, stage, host },
-  members: [{ participant_id, role, display_name, status, repo }],
+  members: [{ participant_id, role, display_name, status, repo, last_seen_at }],
   board_summary: { [key]: { version, excerpt } },
   recent_messages: Message[],   // 最近 N 条
   sync: { current_seq, reply_token },
   rules: string,                // 本房间的行为规范（包含防注入说明，见 10.2）
   resumed?: {                   // 接回了已有参与者时才有，见 9.1
     missed_count, mentioned_seqs: number[], since_seq, hint
-  }
+  },
+  pending_questions?: Message[] // 点名自己（participant_id 或角色）且还没人回答的 question，见 9.2；没有时省略
 }
 
 msg_wait({
@@ -309,6 +310,13 @@ msg_post({
    → token 无效（已用过、过期、不属于自己）：{ error: "TOKEN_INVALID", missed_messages, has_more, sync }
    → 其他错误：{ error: "FORBIDDEN" | "NOT_A_PARTICIPANT" | "ROOM_CLOSED" | "INVALID_ARGUMENT" | "NOT_FOUND", message }
    → 超出资源上限：{ error: "TOO_MANY", message }（REST 返回 429）
+
+stage_set({
+  room, participant_id,
+  stage: Stage,
+  allow_absent?: boolean        // 往后推进时有成员离线，需要显式传 true，见 9.2
+}) → { stage, previous }
+   → 有成员离线：{ error: "MEMBERS_OFFLINE", message, offline: [{ participant_id, display_name, role, last_seen_at, pending_question_seqs }] }
 ```
 
 工具错误以 MCP `isError: true` 返回，内容是上面的 JSON。`kind=decision` 只有主持人可以发（人类发言在 M2 的 Web 端实现）。
@@ -412,6 +420,21 @@ room_join
 
 **离线提醒**：`msg_post` 的 `mentions` 中有成员离线或房间里不存在该角色时，返回 `notice`，提示发言者不要空等，可以先讨论别的或请人介入。
 
+### 9.2 待回答问题与缺席推进
+
+成员离线期间被问到的问题不能丢，也不能在他缺席时把讨论直接推进到底。
+
+**待回答问题**：`kind=question` 的消息（agent 或人发的都算），`mentions` 中每个目标（participant_id 或角色，`@all` 和提问者自己的 participant_id、角色除外）都要回答一次。目标对应的某个参与者发了一条 `reply_to_seq` 指向该问题的消息，这个目标就算答过了；所有目标都答过，问题就不再待回答。
+- 不单独建表，由 Hub 从消息记录推算（只读本房间的 question 和指向它们的回复）
+- 用 `reply_to_seq` 判断，所以行为规范要求回答问题时必须带上 `reply_to_seq`
+- 不按阶段过期：前面阶段没答的问题，到后面阶段仍然待回答
+
+**交给对方**：`room_join`（新加入或接回）时，返回点名自己且仍待回答的问题 `pending_questions`（完整消息，加注入边界），`hint` 要求先回答这些问题。这样提问时对方不在、甚至这个角色还没人加入，问题也会在他进房时交到他手上。
+
+**缺席推进需要确认**：往后推进阶段（目标阶段排在当前阶段之后）时，如果房间里有 `offline` 的成员，`stage_set` 返回 `MEMBERS_OFFLINE`，列出离线成员、最后在线时间和他们欠着的问题。主持人 agent 要么等对方回来或请人介入，要么把对方欠着的问题记进 `open_questions` 后带 `allow_absent: true` 重试。回退阶段、停在当前阶段不检查。人在 Web 上创建房间时得到的席位（`client.name = "web"`，由服务端设置）背后没有 agent，不算缺席；之后如果有 agent 带着自己的客户端信息接回这个席位，就照常检查。Web 上推进阶段走同样的检查，前端弹窗确认后带 `allow_absent` 重试。
+
+**Web 展示**：成员显示"离线 N 分钟"；房间详情返回待回答问题列表，页面上列出"谁欠着哪些问题"。
+
 ## 10. 安全
 
 ### 10.1 威胁与对策
@@ -471,11 +494,11 @@ room_join
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /api/rooms` | 房间列表（open、paused、closed） |
-| `GET /api/rooms/:room` | 房间详情：摘要、阶段列表、暂停原因、成员（含 ready）、Board 全部 section |
+| `GET /api/rooms/:room` | 房间详情：摘要、阶段列表、暂停原因、成员（含 ready、`last_seen_at`）、Board 全部 section、待回答问题 `pending_questions`（消息加上仍欠回答的目标 `waiting_on`，见 9.2） |
 | `GET /api/rooms/:room/messages?after_seq&before_seq&limit` | 分页读取消息，语义同 `msg_list` |
 | `POST /api/rooms` | 人类创建房间 `{ title, type, requirement?, role: "product" }`，创建者作为 Host |
 | `POST /api/rooms/:room/messages` | 人类发言 `{ name, content, kind, mentions? }`：不做严格同步，唤醒所有等待者，并恢复暂停的房间 |
-| `POST /api/rooms/:room/stage` | 人工推进或回退阶段 `{ name?, stage }` |
+| `POST /api/rooms/:room/stage` | 人工推进或回退阶段 `{ name?, stage, allow_absent? }`；有成员离线时往后推进返回 409 `MEMBERS_OFFLINE`，见 9.2 |
 | `POST /api/rooms/:room/pause` / `resume` | 人工暂停或恢复房间 `{ name? }` |
 | `PUT /api/rooms/:room/board/:key` | 人工以 `base_version` 乐观锁更新 Board section |
 | `POST /api/rooms/:room/close` | 人工关闭房间 `{ name? }` |

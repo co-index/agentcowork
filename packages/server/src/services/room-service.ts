@@ -15,12 +15,15 @@ import type { BoardService } from './board-service.js';
 import { redact } from '../security/redact.js';
 import { newId, randomToken } from './ids.js';
 import type { Clock, EventBus, Repository } from './ports.js';
+import type { Questions } from './questions.js';
 import type { ReplyTokens } from './reply-tokens.js';
 import { ROOM_RULES } from './rules.js';
 import type { Thread } from './thread.js';
 import { nameIndex, toMemberView, toMessageView, toRoomView } from './views.js';
 
 const RECENT_MESSAGES = 30;
+/** Cap on pending questions handed over by room_join; the oldest come first. */
+const PENDING_QUESTIONS = 20;
 
 export class RoomService {
   constructor(
@@ -30,6 +33,7 @@ export class RoomService {
     private readonly thread: Thread,
     private readonly tokens: ReplyTokens,
     private readonly board: BoardService,
+    private readonly questions: Questions,
     private readonly clock: Clock,
   ) {}
 
@@ -258,6 +262,11 @@ export class RoomService {
       mentioned.length
         ? `You were mentioned in seq ${mentioned.join(', ')}: answer those first.`
         : '',
+      result.pending_questions?.length
+        ? `You still owe answers to the questions in pending_questions (seq ${result.pending_questions
+            .map((q) => q.seq)
+            .join(', ')}); reply to each with reply_to_seq set to its seq.`
+        : '',
       unseen > 0
         ? `${unseen} of them are older than recent_messages; read them with msg_list(after_seq=${since}).`
         : '',
@@ -282,6 +291,7 @@ export class RoomService {
     // Derive from what we return, so a message landing in between is never silently skipped.
     const currentSeq = recent.at(-1)?.seq ?? 0;
     const names = nameIndex(members);
+    const owed = (await this.questions.owedBy(participant)).slice(0, PENDING_QUESTIONS);
     return {
       participant_id: participant.id,
       room: toRoomView(room, members),
@@ -290,6 +300,7 @@ export class RoomService {
       recent_messages: recent.map((m) => toMessageView(m, names)),
       sync: await this.tokens.issue(participant, currentSeq),
       rules: ROOM_RULES,
+      ...(owed.length ? { pending_questions: owed.map((m) => toMessageView(m, names)) } : {}),
     };
   }
 

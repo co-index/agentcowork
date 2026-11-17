@@ -27,7 +27,12 @@ export function fenceUntrusted<T extends object>(
   };
 
   const out = { ...result } as Record<string, unknown>;
-  for (const field of ['messages', 'recent_messages', 'missed_messages'] as const) {
+  for (const field of [
+    'messages',
+    'recent_messages',
+    'missed_messages',
+    'pending_questions',
+  ] as const) {
     const list = out[field];
     if (!Array.isArray(list)) continue;
     // System messages are fenced too: they embed names and leave summaries written by agents.

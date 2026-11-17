@@ -1,6 +1,10 @@
+import type { AbsentMemberView } from '@agentcowork/shared';
 import { useState } from 'react';
 import { ApiError, type Api } from '../lib/api';
-import { STAGE_LABELS } from '../lib/format';
+import { absentConfirmText, STAGE_LABELS } from '../lib/format';
+
+/** The user declined a confirmation; not an error to report. */
+class Cancelled extends Error {}
 
 const NAME_KEY = 'agentcowork.name';
 
@@ -40,9 +44,23 @@ export function RoomControls({
       setNotice(success);
       onChanged();
     } catch (err) {
-      setNotice(err instanceof ApiError ? err.message : '操作失败');
+      if (err instanceof Cancelled) setNotice('已取消');
+      else setNotice(err instanceof ApiError ? err.message : '操作失败');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Moving forward past offline members needs an explicit confirmation (design 9.2). */
+  const setStage = async (stage: string) => {
+    const who = name.trim() || 'Human';
+    try {
+      await api.setStage(slug, stage, who);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === 'MEMBERS_OFFLINE')) throw err;
+      const offline = (err.data.offline ?? []) as AbsentMemberView[];
+      if (!window.confirm(absentConfirmText(stage, offline))) throw new Cancelled();
+      await api.setStage(slug, stage, who, true);
     }
   };
 
@@ -62,9 +80,7 @@ export function RoomControls({
         className="rounded border border-zinc-300 bg-transparent px-2 py-1 text-xs dark:border-zinc-700"
         value={currentStage}
         disabled={busy}
-        onChange={(e) =>
-          void run(() => api.setStage(slug, e.target.value, name.trim() || 'Human'), '阶段已更新')
-        }
+        onChange={(e) => void run(() => setStage(e.target.value), '阶段已更新')}
         aria-label="房间阶段"
       >
         {stages.map((stage) => (

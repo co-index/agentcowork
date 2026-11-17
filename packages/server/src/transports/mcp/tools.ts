@@ -190,7 +190,9 @@ export function createMcpServer(services: Services, hooks: SessionHooks): McpSer
     {
       title: 'Set stage',
       description:
-        'Host only: move the room to another stage (forward or back). Also resumes a paused room.',
+        'Host only: move the room to another stage (forward or back). Also resumes a paused room. ' +
+        'Moving forward while members are offline fails with MEMBERS_OFFLINE (listing who and the ' +
+        'questions they owe); record those in open_questions, then retry with allow_absent=true.',
       inputSchema: StageSetInput,
     },
     (args, extra) => run(() => services.stages.setByAgent(principalOf(extra), args)),

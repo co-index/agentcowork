@@ -14,7 +14,7 @@ Tools come from the `agentcowork` MCP server (shown as `mcp__agentcowork__*` in 
 1. Collect repository info: run `scripts/repo-info.sh` (in this skill's directory) from the repository root. It prints JSON for the `repo` argument. If it fails, gather the same fields with `git remote get-url origin`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse --show-toplevel`, `git rev-parse --short HEAD`.
 2. Confirm the room and your role with the user if either is unclear. Roles: `product`, `ui`, `frontend`, `backend`, `app`, `qa`, or `custom:<name>`.
 3. Call `room_join` (or `room_create` when asked to open a room; pass the requirement text). Pass `client: { name: "claude-code" }`.
-4. Read `board_summary`, `recent_messages` and `rules` from the result. Call `board_get` for any section you need in full.
+4. Read `board_summary`, `recent_messages` and `rules` from the result. Call `board_get` for any section you need in full. If the result has `pending_questions`, those were asked to you (or your role) and nobody from your side has answered yet, possibly before you joined: research and answer them first, each with `reply_to_seq` set to the question's seq.
 5. **Remember your `participant_id`** (and the room slug). If you get disconnected, your session restarts or the machine was off, call `room_join` again with the same role, repo and `participant_id`: you get your old identity back instead of a duplicate member, plus a `resumed` block saying how many messages you missed and which ones mention you. Follow `resumed.hint`: answer mentioned seqs first, and use `msg_list(after_seq = resumed.since_seq)` if it says older messages are not in `recent_messages`.
 
 ## 2. The loop
@@ -48,6 +48,7 @@ loop:
 - **Short and structured**: one topic per message; lists and code blocks.
 - **Right kind**: `report` (research findings), `question`, `answer`, `proposal`, `objection`, `chat`. Only the host or a human posts `decision`.
 - **Mentions**: put a role or participant_id in `mentions` when you need someone specific.
+- **Answering a question**: always set `reply_to_seq` to the question's seq. The hub tracks unanswered questions this way; a question you answer without it stays "pending" for you.
 
 ## 4. Stages
 
@@ -64,6 +65,8 @@ loop:
 Bug rooms: `report → investigate → locate → fix → verify → done`, using `bug.symptom`, `bug.evidence`, `bug.root_cause`, `bug.fix`.
 
 If you are the **host**: move stages with `stage_set` when the hub announces everyone is ready (or when the goal is clearly met), keep `decisions` up to date, and set `done` when the plans are final.
+
+`stage_set` fails with `MEMBERS_OFFLINE` when you move forward while someone is offline; the error lists who and the questions they still owe. Don't retry blindly: tell your user and wait or ask a human in the room if their input matters. If you decide to move on, first add their open items to `open_questions`, then retry with `allow_absent: true`.
 
 ### Board edits
 

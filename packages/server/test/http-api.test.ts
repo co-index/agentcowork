@@ -87,6 +87,57 @@ describe('REST API', () => {
     expect(res.messages.at(-1).content).not.toContain('room-content');
   });
 
+  it('shows pending questions and asks before advancing past offline members', async () => {
+    const created = await json(
+      fetch(`${base}/api/rooms`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: 'Absent', type: 'feature', role: 'product' }),
+      }),
+    );
+    const slug = created.room.slug as string;
+    const frontend = await hub.services.rooms.join(alice, { room: slug, role: 'frontend' });
+    const asked = await json(
+      fetch(`${base}/api/rooms/${slug}/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'PM',
+          kind: 'question',
+          content: 'Is pagination done?',
+          mentions: ['frontend'],
+        }),
+      }),
+    );
+    // Both go offline; only the agent seat counts as absent, not the creator's Web seat.
+    await hub.services.access.markOffline([created.participant_id, frontend.participant_id]);
+
+    const detail = await json(fetch(`${base}/api/rooms/${slug}`, { headers }));
+    expect(detail.pending_questions).toEqual([
+      expect.objectContaining({ seq: asked.seq, sender: 'PM', waiting_on: ['frontend'] }),
+    ]);
+    expect(typeof detail.members[0].last_seen_at).toBe('string');
+
+    const stage = (body: object) =>
+      fetch(`${base}/api/rooms/${slug}/stage`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'PM', stage: 'research', ...body }),
+      });
+    const blocked = await stage({});
+    expect(blocked.status).toBe(409);
+    const err = await json(blocked);
+    expect(err.error).toBe('MEMBERS_OFFLINE');
+    expect(err.offline).toEqual([
+      expect.objectContaining({
+        participant_id: frontend.participant_id,
+        pending_question_seqs: [asked.seq],
+      }),
+    ]);
+    const ok = await stage({ allow_absent: true });
+    expect(ok.status).toBe(200);
+  });
+
   it('lets a human create, advance, edit and close a room', async () => {
     const created = await json(
       fetch(`${base}/api/rooms`, {

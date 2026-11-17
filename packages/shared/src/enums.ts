@@ -67,5 +67,6 @@ export const ERROR_CODES = [
   'STALE_CONTEXT',
   'TOKEN_INVALID',
   'TOO_MANY',
+  'MEMBERS_OFFLINE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

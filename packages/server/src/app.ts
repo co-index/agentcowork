@@ -5,6 +5,7 @@ import { openSqliteRepository } from './infra/db/sqlite-repository.js';
 import { Access } from './services/access.js';
 import { BoardService } from './services/board-service.js';
 import { MessageService } from './services/message-service.js';
+import { Questions } from './services/questions.js';
 import {
   systemClock,
   type AuthProvider,
@@ -27,6 +28,7 @@ export interface Services {
   messages: MessageService;
   board: BoardService;
   stages: StageService;
+  questions: Questions;
   thread: Thread;
   waits: WaitCoordinator;
 }
@@ -50,8 +52,9 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
   const waits = new WaitCoordinator(bus, config.heartbeatSeconds * 1000, limits);
   const access = new Access(repo, bus, clock);
   const board = new BoardService(repo, access, thread, clock);
-  const stages = new StageService(repo, access, thread, clock, config.idlePauseMs);
-  const rooms = new RoomService(repo, bus, access, thread, tokens, board, clock);
+  const questions = new Questions(repo);
+  const stages = new StageService(repo, access, thread, questions, clock, config.idlePauseMs);
+  const rooms = new RoomService(repo, bus, access, thread, tokens, board, questions, clock);
   const messages = new MessageService(
     repo,
     access,
@@ -63,7 +66,7 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
     clock,
     config.msgBatchMaxChars,
   );
-  return { repo, bus, access, rooms, messages, board, stages, thread, waits };
+  return { repo, bus, access, rooms, messages, board, stages, questions, thread, waits };
 }
 
 export interface Hub {
