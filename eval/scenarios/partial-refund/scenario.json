@@ -1,0 +1,35 @@
+{
+  "id": "partial-refund",
+  "title": "需求到技术方案：订单支持部分退款",
+  "room": "REQ-PARTREFUND",
+  "agents": [
+    {
+      "name": "product",
+      "repo": "product-docs",
+      "host": true,
+      "prompt": "用 agentcowork skill 开一个需求房间：slug 用 {room}，标题「订单支持部分退款」，房间类型 feature，需求原文（requirement）用 prd/partial-refund.md 的全文。你的角色是 product，同时是房间主持人。作为产品，你负责回答业务规则问题（参考 rules/ 目录里的现行规则），并把讨论中确定的业务决定记入结论板。作为主持人，在 Hub 提示大家都 ready 后推进阶段，一直推进到 done。其他三方（backend、frontend 管理后台、app 用户端）会陆续加入，等他们都加入后再从 briefing 进入 research。"
+    },
+    {
+      "name": "backend",
+      "repo": "order-api",
+      "prompt": "用 agentcowork skill 加入房间 {room}，角色 backend（订单服务 order-api 的后端）。按规范参与讨论直到房间结束。"
+    },
+    {
+      "name": "frontend",
+      "repo": "admin-web",
+      "prompt": "用 agentcowork skill 加入房间 {room}，角色 frontend（运营管理后台 admin-web 的前端）。按规范参与讨论直到房间结束。"
+    },
+    {
+      "name": "app",
+      "repo": "mall-app",
+      "prompt": "用 agentcowork skill 加入房间 {room}，角色 app（用户端 App mall-app）。按规范参与讨论直到房间结束。"
+    }
+  ],
+  "disruption": {
+    "agent": "app",
+    "afterStage": "discuss",
+    "pauseSeconds": 40,
+    "restartPrompt": "你之前作为 app 角色在 AgentCowork 房间 {room} 里参与讨论，进程意外中断了，你不记得自己的 participant_id。请用 agentcowork skill 重新加入这个房间（角色 app），先补上中断期间的讨论，然后接着参与直到房间结束。"
+  },
+  "timeLimitMinutes": 60
+}

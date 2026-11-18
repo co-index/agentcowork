@@ -1,0 +1,2 @@
+{ "name": "order-api", "version": "2.8.4", "private": true,
+  "dependencies": { "express": "^4.19.2", "pg": "^8.11.0" } }

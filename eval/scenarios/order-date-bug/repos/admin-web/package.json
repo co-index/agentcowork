@@ -1,0 +1,2 @@
+{ "name": "admin-web", "version": "1.15.2", "private": true,
+  "dependencies": { "react": "^18.3.1", "antd": "^5.20.0", "dayjs": "^1.11.13" } }

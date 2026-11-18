@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: order-api
+          image: registry.example.com/shop/order-api:2.8.4
+          env:
+            - name: TZ
+              value: Asia/Shanghai

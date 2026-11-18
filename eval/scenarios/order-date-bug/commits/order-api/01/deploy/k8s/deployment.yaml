@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: order-api
+          image: registry.example.com/shop-v2/order-api:2.9.0
+          env:
+            # New cluster convention: every service runs in UTC.
+            - name: TZ
+              value: UTC

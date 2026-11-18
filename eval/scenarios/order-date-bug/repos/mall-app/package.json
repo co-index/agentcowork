@@ -1,0 +1,2 @@
+{ "name": "mall-app", "version": "3.5.0", "private": true,
+  "dependencies": { "react-native": "0.74.5" } }

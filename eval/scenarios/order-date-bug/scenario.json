@@ -1,0 +1,29 @@
+{
+  "id": "order-date-bug",
+  "title": "跨端 Bug 排查：按日期查订单漏单 / 串单",
+  "room": "BUG-ORDERDATE",
+  "agents": [
+    {
+      "name": "product",
+      "repo": "product-docs",
+      "host": true,
+      "prompt": "用 agentcowork skill 开一个 bug 房间：slug 用 {room}，标题「按日期查订单漏单/串单」，房间类型 bug，问题描述（requirement）用 bugs/BUG-20261117-orders-by-date.md 的全文。你的角色是 product（代表客服和产品，掌握用户反馈和订单样本数据 bugs/data/），同时是房间主持人。作为主持人，按 bug 房间的阶段推进（Hub 提示大家都 ready 后推进），一直推进到 done。其他三方（backend、frontend 管理后台、app 用户端）会陆续加入，等他们都加入后再从 report 进入 investigate。"
+    },
+    {
+      "name": "backend",
+      "repo": "order-api",
+      "prompt": "用 agentcowork skill 加入 bug 房间 {room}，角色 backend（订单服务 order-api 的后端）。和其他各端一起排查这个线上问题，直到房间结束。"
+    },
+    {
+      "name": "frontend",
+      "repo": "admin-web",
+      "prompt": "用 agentcowork skill 加入 bug 房间 {room}，角色 frontend（运营管理后台 admin-web 的前端）。和其他各端一起排查这个线上问题，直到房间结束。"
+    },
+    {
+      "name": "app",
+      "repo": "mall-app",
+      "prompt": "用 agentcowork skill 加入 bug 房间 {room}，角色 app（用户端 App mall-app）。和其他各端一起排查这个线上问题，直到房间结束。"
+    }
+  ],
+  "timeLimitMinutes": 60
+}
