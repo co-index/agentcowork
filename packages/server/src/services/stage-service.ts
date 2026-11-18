@@ -2,7 +2,8 @@ import type { AbsentMemberView, MemberStatusView, Stage, StageSetInput } from '@
 import { AppError } from '../domain/errors.js';
 import {
   actorLabel,
-  WEB_CLIENT,
+  isWebSeat,
+  sameRepo,
   type Actor,
   type Message,
   type Participant,
@@ -145,8 +146,16 @@ export class StageService {
     });
   }
 
-  /** Throws LIMIT_REACHED / ROOM_PAUSED if the participant may not speak now. Call under the room lock. */
-  async assertCanSpeak(room: Room, participant: Participant): Promise<void> {
+  /**
+   * Throws LIMIT_REACHED / ROOM_PAUSED if the participant may not speak now. Call under the room lock.
+   * The first ready=true post of a stage is always allowed, so a member who has nothing to add
+   * or used up its quota can still say it is done (design 8.3).
+   */
+  async assertCanSpeak(
+    room: Room,
+    participant: Participant,
+    opts: { ready?: boolean } = {},
+  ): Promise<void> {
     if (room.status === 'paused') {
       throw new AppError(
         'ROOM_PAUSED',
@@ -159,9 +168,14 @@ export class StageService {
     if (limit === null) return;
     const used = await this.repo.countAgentMessages(room.id, room.stageStartedSeq, participant.id);
     if (used >= limit) {
+      if (opts.ready) {
+        const ready = await this.repo.readyParticipants(room.id, room.stageStartedSeq);
+        if (!ready.has(participant.id)) return;
+      }
       throw new AppError(
         'LIMIT_REACHED',
-        `You used all ${limit} messages allowed in stage "${room.stage}". Only call msg_wait until the stage advances.`,
+        `You used all ${limit} messages allowed in stage "${room.stage}". Only call msg_wait until the stage advances` +
+          ' (one short ready=true message is still allowed if you have not sent one).',
         { limit, used },
       );
     }
@@ -179,22 +193,67 @@ export class StageService {
       );
       return;
     }
-    if (message.ready && settings.readyAnnouncedFor !== room.stageStartedSeq) {
-      const members = await this.activeMembers(room.id);
-      const ready = await this.repo.readyParticipants(room.id, room.stageStartedSeq);
-      if (members.length > 0 && members.every((m) => ready.has(m.id))) {
-        await this.repo.updateRoom(room.id, {
-          settings: { ...room.settings, readyAnnouncedFor: room.stageStartedSeq },
-        });
-        const next = nextStage(room.type, room.stage);
-        await this.thread.systemLocked(
-          room.id,
-          `All online participants are ready to finish stage "${room.stage}".` +
-            (next ? ` The host may call stage_set with stage "${next}".` : ''),
-          { broadcast: true },
-        );
+    void message;
+    await this.announceIfAllReady(room);
+  }
+
+  /**
+   * Re-counts readiness when a member goes offline or leaves, so the last member that was not
+   * ready dropping out does not leave the stage stuck (design 8.3).
+   */
+  async recheckReady(roomId: string): Promise<void> {
+    await this.thread.lock(roomId, async () => {
+      const room = await this.repo.findRoom(roomId);
+      if (room) await this.announceIfAllReady(room);
+    });
+  }
+
+  /** Announces once per stage that every counted member is ready. Call under the room lock. */
+  private async announceIfAllReady(room: Room): Promise<void> {
+    const settings = room.settings as StageSettings;
+    if (room.status !== 'open' || room.stage === 'done') return;
+    if (settings.readyAnnouncedFor === room.stageStartedSeq) return;
+    const members = await this.repo.listParticipants(room.id);
+    // The host decides when to move on, and a Web seat is a human: neither is waited for.
+    const counted = members.filter(
+      (m) =>
+        (m.status === 'online' || m.status === 'waiting') &&
+        m.id !== room.hostParticipantId &&
+        !isWebSeat(m),
+    );
+    if (counted.length === 0) return;
+    const ready = await this.readySet(room, counted);
+    if (!counted.every((m) => ready.has(m.id))) return;
+    await this.repo.updateRoom(room.id, {
+      settings: { ...room.settings, readyAnnouncedFor: room.stageStartedSeq },
+    });
+    room.settings = { ...room.settings, readyAnnouncedFor: room.stageStartedSeq };
+    const next = nextStage(room.type, room.stage);
+    const host = members.find((m) => m.id === room.hostParticipantId);
+    const who =
+      !host || isWebSeat(host) || host.status === 'left'
+        ? 'A human can advance the stage in the Web UI'
+        : 'The host may call stage_set';
+    await this.thread.systemLocked(
+      room.id,
+      `All online participants are ready to finish stage "${room.stage}".` +
+        (next ? ` ${who} with stage "${next}".` : ''),
+      { broadcast: true },
+    );
+  }
+
+  /** Members that posted ready=true this stage or used up their speaking quota. */
+  private async readySet(room: Room, members: Participant[]): Promise<Set<string>> {
+    const ready = await this.repo.readyParticipants(room.id, room.stageStartedSeq);
+    const limit = speakingLimit(room.type, room.stage);
+    if (limit !== null) {
+      for (const m of members) {
+        if (ready.has(m.id)) continue;
+        const used = await this.repo.countAgentMessages(room.id, room.stageStartedSeq, m.id);
+        if (used >= limit) ready.add(m.id);
       }
     }
+    return ready;
   }
 
   /** Lifts a pause after a human steps in (keeps the stage). Call under the room lock. */
@@ -231,7 +290,7 @@ export class StageService {
   }
 
   async memberStatus(room: Room, members: Participant[]): Promise<MemberStatusView[]> {
-    const ready = await this.repo.readyParticipants(room.id, room.stageStartedSeq);
+    const ready = await this.readySet(room, members);
     return members
       .filter((m) => m.status !== 'left')
       .map((m) => ({ ...toMemberStatus(m), ready: ready.has(m.id) }));
@@ -239,9 +298,15 @@ export class StageService {
 
   /** Offline members with the questions they still owe; they block moving forward. */
   async absentMembers(room: Room): Promise<AbsentMemberView[]> {
-    // A Web-created seat has no agent behind it; its human is not "absent" from the discussion.
-    const offline = (await this.repo.listParticipants(room.id)).filter(
-      (m) => m.status === 'offline' && m.client?.name !== WEB_CLIENT,
+    const members = await this.repo.listParticipants(room.id);
+    const present = members.filter((m) => m.status === 'online' || m.status === 'waiting');
+    const offline = members.filter(
+      (m) =>
+        m.status === 'offline' &&
+        // A Web seat is a human, not an absent agent (design 9.2).
+        !isWebSeat(m) &&
+        // Replaced by a present member of the same role and checkout, e.g. after a restart.
+        !present.some((p) => p.role === m.role && sameRepo(p.repo, m.repo)),
     );
     if (offline.length === 0) return [];
     const pending = await this.questions.pending(room.id);
@@ -266,15 +331,11 @@ export class StageService {
     room.status = 'paused';
     await this.thread.systemLocked(
       room.id,
-      `Room paused: ${reason}. Agents: stop looping and report to your local user. ` +
-        'A human (or the host via stage_set) can resume the room.',
+      `Room paused: ${reason}. Agents: stop looping and report to your local user, but do not ` +
+        'call room_leave. A human (or the host via stage_set) can resume the room; then call ' +
+        'room_join again with your participant_id and continue.',
       { broadcast: true },
     );
-  }
-
-  private async activeMembers(roomId: string): Promise<Participant[]> {
-    const members = await this.repo.listParticipants(roomId);
-    return members.filter((m) => m.status === 'online' || m.status === 'waiting');
   }
 }
 

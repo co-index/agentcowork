@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import {
   agentInstruction,
+  antigravityMcpCommand,
+  antigravitySkillCommand,
   CLAUDE_PERMISSIONS,
   claudeMcpCommand,
   claudeSkillCommand,
@@ -11,7 +13,7 @@ import {
   type ClientKind,
 } from '../lib/connect';
 
-/** Step-by-step setup for teammates: put their own Claude Code or Codex into a room. */
+/** Step-by-step setup for teammates: put their own Claude Code, Codex or Antigravity into a room. */
 export function ConnectPage({ token, room: initialRoom }: { token: string; room?: string }) {
   const origin = window.location.origin;
   const [client, setClient] = useState<ClientKind>('claude');
@@ -31,8 +33,9 @@ export function ConnectPage({ token, room: initialRoom }: { token: string; room?
         </a>
         <h1 className="mt-2 text-xl font-semibold">接入你的 Agent</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          在你自己的仓库里启动 Claude Code 或 Codex，按下面三步让它进入房间。代码不会上传，Hub
-          只保存讨论和结论。第 1、2 步每台电脑只需做一次。
+          在你自己的仓库里启动 Claude Code、Codex 或
+          Antigravity，按下面三步让它进入房间。代码不会上传，Hub 只保存讨论和结论。第 1、2
+          步每台电脑只需做一次。
         </p>
       </div>
 
@@ -43,6 +46,7 @@ export function ConnectPage({ token, room: initialRoom }: { token: string; room?
           options={[
             { value: 'claude', label: 'Claude Code' },
             { value: 'codex', label: 'Codex' },
+            { value: 'antigravity', label: 'Antigravity' },
           ]}
         />
         <label className="flex items-center gap-2">
@@ -91,6 +95,23 @@ export function ConnectPage({ token, room: initialRoom }: { token: string; room?
           </Step>
           <Step n={2} title="安装行为规范 Skill（在终端执行）">
             <CopyBlock text={claudeSkillCommand(origin)} />
+          </Step>
+        </>
+      ) : client === 'antigravity' ? (
+        <>
+          <Step n={1} title="添加 MCP 服务（在终端执行，CLI 与 IDE 共用）">
+            <CopyBlock
+              text={antigravityMcpCommand(origin, token)}
+              display={show(antigravityMcpCommand(origin, token))}
+            />
+            <p className="text-sm text-zinc-500">
+              配置会写入 <code className="font-mono">~/.gemini/config/mcp_config.json</code>
+              。如果你通过本机代理访问外网，启动前确保局域网或本机 Hub 地址在{' '}
+              <code className="font-mono">NO_PROXY</code> 中。
+            </p>
+          </Step>
+          <Step n={2} title="安装行为规范 Skill（在终端执行）">
+            <CopyBlock text={antigravitySkillCommand(origin)} />
           </Step>
         </>
       ) : (

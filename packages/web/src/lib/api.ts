@@ -104,7 +104,16 @@ export class Api {
     return this.get<ListResult>(`/api/rooms/${encodeURIComponent(slug)}/messages?${q}`);
   }
 
-  post(slug: string, body: { name: string; content: string; kind: string; mentions?: string[] }) {
+  post(
+    slug: string,
+    body: {
+      name: string;
+      content: string;
+      kind: string;
+      mentions?: string[];
+      reply_to_seq?: number;
+    },
+  ) {
     return this.request<{ seq: number; redacted?: string[] }>(
       `/api/rooms/${encodeURIComponent(slug)}/messages`,
       { method: 'POST', body: JSON.stringify(body) },
@@ -153,6 +162,13 @@ export class Api {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
+  }
+
+  removeMember(slug: string, participantId: string, name: string) {
+    return this.request<{ ok: true }>(
+      `/api/rooms/${encodeURIComponent(slug)}/members/${encodeURIComponent(participantId)}/remove`,
+      { method: 'POST', body: JSON.stringify({ name }) },
+    );
   }
 
   updateBoard(slug: string, key: string, body: { content: string; base_version: number }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, offlineAfterMs } from '../src/config.js';
 import { HostTokenAuth } from '../src/infra/auth/host-token-auth.js';
 
 describe('host configuration', () => {
@@ -19,5 +19,19 @@ describe('host configuration', () => {
     expect(() => loadConfig('host', {}, { AGENTCOWORK_TOKEN: '   ' })).toThrow(
       'AGENTCOWORK_TOKEN must not be empty',
     );
+  });
+});
+
+describe('offline threshold', () => {
+  it('defaults to 10 minutes, separate from the wait limit', () => {
+    const config = loadConfig('host', {}, {});
+    expect(offlineAfterMs(config)).toBe(10 * 60_000);
+    // Shortening waits for a client with a short tool timeout does not shorten it.
+    expect(offlineAfterMs({ ...config, waitMaxSeconds: 60 })).toBe(10 * 60_000);
+  });
+
+  it('is never shorter than one full wait plus a minute', () => {
+    const config = loadConfig('host', {}, { AGENTCOWORK_OFFLINE_AFTER_SECONDS: '30' });
+    expect(offlineAfterMs(config)).toBe((240 + 60) * 1000);
   });
 });

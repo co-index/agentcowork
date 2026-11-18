@@ -1,6 +1,6 @@
 /** Text for the "connect your agent" page: MCP config, behaviour rules and the first instruction. */
 
-export type ClientKind = 'claude' | 'codex';
+export type ClientKind = 'claude' | 'codex' | 'antigravity';
 
 export const CONNECT_ROLES = [
   { value: 'product', label: '产品' },
@@ -75,6 +75,23 @@ export function codexPromptCommand(origin: string): string {
   );
 }
 
+/** Registers the hub globally for Antigravity CLI (`agy`) and Antigravity IDE. */
+export function antigravityMcpCommand(origin: string, token: string): string {
+  return `agy mcp add --header "Authorization: Bearer ${token}" agentcowork ${mcpUrl(origin)}`;
+}
+
+/** Installs the AgentCowork skill into Antigravity's global skills directory. */
+export function antigravitySkillCommand(origin: string): string {
+  const dir = '~/.gemini/config/skills/agentcowork';
+  const src = `${base(origin)}/skill/agentcowork`;
+  return [
+    `mkdir -p ${dir}/scripts`,
+    `curl -fsSL ${src}/SKILL.md -o ${dir}/SKILL.md`,
+    `curl -fsSL ${src}/scripts/repo-info.sh -o ${dir}/scripts/repo-info.sh`,
+    `chmod +x ${dir}/scripts/repo-info.sh`,
+  ].join(' && \\\n');
+}
+
 export interface InstructionInput {
   client: ClientKind;
   role: string;
@@ -84,8 +101,7 @@ export interface InstructionInput {
 
 /** The sentence the user types to their agent to get it into the room. */
 export function agentInstruction({ client, role, room }: InstructionInput): string {
-  const lead =
-    client === 'claude' ? '使用 agentcowork skill' : '按 AGENTS.md 中 AgentCowork 的说明';
+  const lead = client === 'codex' ? '按 AGENTS.md 中 AgentCowork 的说明' : '使用 agentcowork skill';
   const slug = room?.trim();
   if (slug) {
     return (

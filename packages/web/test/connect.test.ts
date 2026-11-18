@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentInstruction,
+  antigravityMcpCommand,
+  antigravitySkillCommand,
   claudeMcpCommand,
   claudeSkillCommand,
   codexConfig,
@@ -47,10 +49,25 @@ describe('connect page text', () => {
     );
   });
 
+  it('Antigravity commands register the hub and install the global skill', () => {
+    const mcp = antigravityMcpCommand(origin, token);
+    expect(mcp).toBe(
+      `agy mcp add --header "Authorization: Bearer ${token}" agentcowork https://cowork.example.com/mcp`,
+    );
+    const skill = antigravitySkillCommand(origin);
+    expect(skill).toContain('~/.gemini/config/skills/agentcowork');
+    expect(skill).toContain('https://cowork.example.com/skill/agentcowork/SKILL.md');
+    expect(skill).toContain('https://cowork.example.com/skill/agentcowork/scripts/repo-info.sh');
+    expect(skill).not.toContain(token);
+  });
+
   it('instruction joins a given room, or opens and hosts a new one', () => {
     const join = agentInstruction({ client: 'codex', role: 'frontend', room: ' REQ-1 ' });
     expect(join).toContain('加入房间 REQ-1，角色 frontend');
     expect(join).toContain('AGENTS.md');
+    const agyJoin = agentInstruction({ client: 'antigravity', role: 'backend', room: 'REQ-2' });
+    expect(agyJoin).toContain('agentcowork skill');
+    expect(agyJoin).toContain('加入房间 REQ-2，角色 backend');
     const host = agentInstruction({ client: 'claude', role: 'product' });
     expect(host).toContain('agentcowork skill');
     expect(host).toContain('开一个需求房间');

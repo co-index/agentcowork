@@ -12,7 +12,10 @@ import type {
 import { AppError } from '../domain/errors.js';
 import {
   BROADCAST,
+  isNotice,
+  isWebSeat,
   mentions,
+  normalizeMentions,
   type Message,
   type Participant,
   type Principal,
@@ -22,6 +25,7 @@ import { redact } from '../security/redact.js';
 import type { Clock, Repository } from './ports.js';
 import type { ReplyTokens } from './reply-tokens.js';
 import type { Access } from './access.js';
+import type { Questions } from './questions.js';
 import { STAGE_GUIDANCE } from './rules.js';
 import type { StageService } from './stage-service.js';
 import type { Thread } from './thread.js';
@@ -57,6 +61,7 @@ export class MessageService {
     private readonly thread: Thread,
     private readonly tokens: ReplyTokens,
     private readonly waits: WaitCoordinator,
+    private readonly questions: Questions,
     private readonly waitMaxSeconds: number,
     private readonly clock: Clock,
     msgBatchMaxChars = DEFAULT_BATCH_MAX_CHARS,
@@ -76,13 +81,18 @@ export class MessageService {
       input.room,
       input.participant_id,
     );
+    // Notices (joins, board updates) only wake the host, which waits for members to arrive.
+    const isHost = room.hostParticipantId === participant.id;
     const wakes = (m: Message) =>
       m.participantId !== participant.id &&
+      (isHost || !isNotice(m)) &&
       (!input.only_when_mentioned || m.senderType === 'human' || mentions(m, participant));
     const timeoutSeconds = Math.min(
       input.timeout_seconds ?? this.waitMaxSeconds,
       this.waitMaxSeconds,
     );
+    // A cursor past the end would skip the next messages; treat it as "up to now".
+    const afterSeq = Math.min(input.after_seq, await this.repo.currentSeq(room.id));
 
     // Register first, then read the backlog: nothing can arrive unnoticed in between.
     const handle = this.waits.register({
@@ -92,7 +102,7 @@ export class MessageService {
       timeoutMs: timeoutSeconds * 1000,
       ...opts,
     });
-    let batch = await this.readAfter(room.id, input.after_seq);
+    let batch = await this.readAfter(room.id, afterSeq);
     let timedOut = false;
     try {
       // A paused or closed room returns at once so agents stop polling it.
@@ -102,7 +112,7 @@ export class MessageService {
           await this.access.setStatus(participant, 'waiting');
           const outcome = await handle.promise;
           timedOut = outcome === 'timeout';
-          batch = await this.readAfter(room.id, input.after_seq);
+          batch = await this.readAfter(room.id, afterSeq);
         } finally {
           const left = (this.activeWaits.get(participant.id) ?? 1) - 1;
           if (left > 0) this.activeWaits.set(participant.id, left);
@@ -112,9 +122,11 @@ export class MessageService {
     } finally {
       handle.cancel();
       const fresh = await this.repo.findParticipant(participant.id);
-      if (fresh?.status === 'waiting' && !this.activeWaits.has(participant.id)) {
-        // Not client activity: a dead client's wait also ends here, on timeout.
-        await this.access.setStatus(fresh, 'online', { touch: false });
+      if (fresh && fresh.status !== 'left') {
+        // The result is handed back now and the agent works on it locally from here, so the
+        // offline clock starts at the end of the wait, not its start (design 9.1).
+        const idle = fresh.status === 'waiting' && !this.activeWaits.has(participant.id);
+        await this.access.setStatus(fresh, idle ? 'online' : fresh.status);
       }
     }
 
@@ -148,17 +160,18 @@ export class MessageService {
         throw new AppError('FORBIDDEN', 'Only the host (or a human) may post kind=decision');
       }
       // Checked before redeeming, so a refused post does not burn the token.
-      await this.stages.assertCanSpeak(room, participant);
+      await this.stages.assertCanSpeak(room, participant, { ready: input.ready ?? false });
 
       const token = await this.tokens.redeem(participant, input.reply_token);
       const currentSeq = await this.repo.currentSeq(room.id);
       if (input.expected_last_seq > currentSeq) {
+        // Hand back what the caller provably missed, never a token that skips it (design 8.2).
         throw await this.syncError(
           'INVALID_ARGUMENT',
           `expected_last_seq ${input.expected_last_seq} is ahead of the room (current ${currentSeq})`,
           room,
           participant,
-          currentSeq,
+          Math.min(token?.issuedAtSeq ?? current.lastSeenSeq, currentSeq),
         );
       }
       if (input.reply_to_seq !== undefined && input.reply_to_seq > currentSeq) {
@@ -177,7 +190,8 @@ export class MessageService {
       // Messages you posted yourself never make your context stale.
       const seenSeq = Math.min(input.expected_last_seq, token.issuedAtSeq);
       const batch = await this.readAfter(room.id, seenSeq);
-      if (batch.messages.some((m) => m.participantId !== participant.id)) {
+      // Notices (joins, board updates) are not new context worth a rewrite (design 8.2).
+      if (batch.messages.some((m) => m.participantId !== participant.id && !isNotice(m))) {
         throw await this.syncError(
           'STALE_CONTEXT',
           'New messages arrived since your last sync. Read missed_messages, then rewrite or resend.',
@@ -196,13 +210,18 @@ export class MessageService {
         senderName: null,
         kind: input.kind,
         content: text,
-        mentions: input.mentions ?? [],
+        mentions: normalizeMentions(input.mentions ?? []),
         replyToSeq: input.reply_to_seq ?? null,
         evidence: input.evidence ?? [],
         ready: input.ready ?? false,
       });
       await this.stages.afterAgentPost(room, message);
-      const notice = await this.offlineNotice(room.id, message.mentions, participant.id);
+      const notice = [
+        await this.offlineNotice(room.id, message.mentions, participant.id),
+        await this.owedNotice(current),
+      ]
+        .filter(Boolean)
+        .join(' ');
       // Hub messages appended by afterAgentPost are new context: the next sync starts before them.
       return {
         seq: message.seq,
@@ -227,7 +246,9 @@ export class MessageService {
     const notes: string[] = [];
     for (const target of targets) {
       const matching = members.filter((m) => m.id === target || m.role === target);
-      if (matching.some((m) => m.status === 'online' || m.status === 'waiting')) continue;
+      // A Web seat is a human reading the page: never "offline" for a question.
+      if (matching.some((m) => m.status === 'online' || m.status === 'waiting' || isWebSeat(m)))
+        continue;
       if (matching.length === 0) {
         notes.push(`nobody with role or id "${target}" is in the room`);
         continue;
@@ -240,6 +261,24 @@ export class MessageService {
     return (
       `Heads-up: ${notes.join('; ')}. Your message is kept and will be seen when they come back. ` +
       'Continue with other topics instead of waiting, or ask a human in the room.'
+    );
+  }
+
+  /** Reminds an agent of questions it still owes, so answers get linked to them (design 9.2). */
+  private async owedNotice(participant: Participant): Promise<string | undefined> {
+    const owed = await this.questions.owedBy(participant);
+    if (owed.length === 0) return undefined;
+    const members = nameIndex(await this.repo.listParticipants(participant.roomId));
+    const list = owed
+      .slice(0, 5)
+      .map(
+        (q) =>
+          `seq ${q.seq} (from ${q.participantId ? (members.get(q.participantId) ?? 'a member') : (q.senderName ?? 'a human')})`,
+      )
+      .join(', ');
+    return (
+      `Reminder: you still owe answers to question ${list}${owed.length > 5 ? ' and more' : ''}. ` +
+      'Answer each with reply_to_seq set to its seq, or write "seq N" in your answer.'
     );
   }
 
@@ -261,6 +300,14 @@ export class MessageService {
         throw new AppError('ROOM_CLOSED', `Room is ${room.status}`);
       }
       await this.stages.resumeLocked(room);
+      if (input.reply_to_seq !== undefined) {
+        if (input.reply_to_seq > (await this.repo.currentSeq(room.id))) {
+          throw new AppError(
+            'INVALID_ARGUMENT',
+            `reply_to_seq ${input.reply_to_seq} does not exist`,
+          );
+        }
+      }
       const { text, kinds } = redact(input.content);
       const message = await this.thread.appendLocked({
         roomId: room.id,
@@ -270,8 +317,8 @@ export class MessageService {
         senderName: input.name,
         kind: input.kind,
         content: text,
-        mentions: input.mentions ?? [],
-        replyToSeq: null,
+        mentions: normalizeMentions(input.mentions ?? []),
+        replyToSeq: input.reply_to_seq ?? null,
         evidence: [],
         ready: false,
       });

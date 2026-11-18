@@ -1,5 +1,5 @@
 import { AppError } from '../domain/errors.js';
-import type { Participant, Principal, Room } from '../domain/models.js';
+import { isWebSeat, type Participant, type Principal, type Room } from '../domain/models.js';
 import type { Clock, EventBus, Repository } from './ports.js';
 
 export interface ParticipantContext {
@@ -78,7 +78,8 @@ export class Access {
     const stale = await this.repo.listStaleParticipants(this.clock.now() - staleMs);
     const marked: string[] = [];
     for (const p of stale) {
-      if (isBusy(p.id)) continue;
+      // A Web seat is a human at a browser; presence there is not tracked (design 9.1).
+      if (isBusy(p.id) || isWebSeat(p)) continue;
       await this.setStatus(p, 'offline', { touch: false });
       marked.push(p.id);
     }

@@ -185,5 +185,7 @@ export const HumanPostInput = z.object({
   content: z.string().min(1).max(LIMITS.contentMax),
   kind: PostableKindSchema.default('chat'),
   mentions: z.array(z.string().min(1).max(64)).max(LIMITS.mentionsMax).optional(),
+  /** Answering a question: a human reply resolves it (design 9.2). */
+  reply_to_seq: z.number().int().min(1).optional(),
 });
 export type HumanPostInput = z.infer<typeof HumanPostInput>;

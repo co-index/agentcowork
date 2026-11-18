@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_LIMITS, type Config, type Limits } from './config.js';
+import { DEFAULT_LIMITS, offlineAfterMs, type Config, type Limits } from './config.js';
 import { MemoryEventBus } from './infra/events/memory-event-bus.js';
 import { openSqliteRepository } from './infra/db/sqlite-repository.js';
 import { Access } from './services/access.js';
@@ -62,10 +62,21 @@ export function createServices(config: ServiceOptions, clock: Clock = systemCloc
     thread,
     tokens,
     waits,
+    questions,
     config.waitMaxSeconds,
     clock,
     config.msgBatchMaxChars,
   );
+  // A member going offline or leaving may complete "everyone is ready" (design 8.3).
+  bus.subscribe((event) => {
+    if (event.type !== 'participant.updated') return;
+    void repo
+      .findParticipant(event.participantId)
+      .then((p) =>
+        p?.status === 'offline' || p?.status === 'left' ? stages.recheckReady(p.roomId) : undefined,
+      )
+      .catch(() => undefined);
+  });
   return { repo, bus, access, rooms, messages, board, stages, questions, thread, waits };
 }
 
@@ -85,9 +96,9 @@ export function createHub(config: Config, auth: AuthProvider): Hub {
   });
   const janitor = setInterval(() => {
     services.stages.pauseIdleRooms().catch((err) => console.error('[janitor]', err));
-    // Two full wait periods without a request means the agent is gone (e.g. machine shut down).
+    // No request and no wait ending for the offline period: the agent is gone (design 9.1).
     services.access
-      .markStale(config.waitMaxSeconds * 2000, (id) => services.messages.isWaiting(id))
+      .markStale(offlineAfterMs(config), (id) => services.messages.isWaiting(id))
       .catch((err) => console.error('[janitor]', err));
   }, 60_000);
   janitor.unref();

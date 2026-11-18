@@ -86,10 +86,56 @@ describe('pending questions and absent members (design 9.2)', () => {
       expect(await pending()).toEqual([{ seq: human.seq, waitingOn: ['frontend'] }]);
     });
 
-    it('drops a target addressed by id once that participant has left', async () => {
+    it('keeps a question to a member who left, and hands it over when it rejoins', async () => {
       const q = await ask(alice, host, [guest.participant_id]);
       await s.rooms.leave(bob, { room: 'REQ-1', participant_id: guest.participant_id });
-      expect(await pending()).not.toContainEqual(expect.objectContaining({ seq: q.seq }));
+      expect(await pending()).toEqual([{ seq: q.seq, waitingOn: [guest.participant_id] }]);
+      const back = await s.rooms.join(bob, {
+        room: 'REQ-1',
+        role: 'frontend',
+        participant_id: guest.participant_id,
+      });
+      expect(back.pending_questions?.map((m) => m.seq)).toEqual([q.seq]);
+    });
+
+    it('a human reply resolves the whole question; mentions are normalized', async () => {
+      const q = await ask(alice, host, ['@frontend', 'app', 'all']);
+      const stored = (await s.messages.list({ room: 'REQ-1', after_seq: q.seq - 1, limit: 1 }))
+        .messages[0];
+      expect(stored?.mentions).toEqual(['frontend', 'app', '@all']);
+      await s.messages.postAsHuman(alice, 'REQ-1', {
+        name: 'PM',
+        content: 'Frontend shows 20 per page.',
+        kind: 'answer',
+        reply_to_seq: q.seq,
+      });
+      expect(await pending()).toEqual([]);
+    });
+  });
+
+  describe('answers cited in the text', () => {
+    it('counts "seq N" in an answer, but not "#N" list markers', async () => {
+      const q1 = await ask(alice, host, ['frontend'], 'Paging?');
+      const q2 = await ask(alice, host, ['frontend'], 'Sorting?');
+      await post(s, bob, guest, await syncOf(bob, guest), `Decisions #${q2.seq} look fine.`);
+      expect((await pending()).map((p) => p.seq)).toEqual([q1.seq, q2.seq]);
+      await post(s, bob, guest, await syncOf(bob, guest), `On seq ${q1.seq} and seq ${q2.seq}: …`, {
+        kind: 'answer',
+      });
+      expect(await pending()).toEqual([]);
+    });
+
+    it('reminds an agent that posts while it still owes answers', async () => {
+      const q = await ask(alice, host, ['frontend'], 'Paging?');
+      const res = await post(s, bob, guest, await syncOf(bob, guest), 'Something else');
+      expect(res.notice).toMatch(
+        new RegExp(`still owe answers to question seq ${q.seq} \\(from backend·alice\\)`),
+      );
+      const answered = await post(s, bob, guest, await syncOf(bob, guest), '20 per page', {
+        kind: 'answer',
+        reply_to_seq: q.seq,
+      });
+      expect(answered.notice).toBeUndefined();
     });
   });
 

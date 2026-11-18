@@ -123,6 +123,17 @@ export function registerApi(
         return services.rooms.closeByHuman(req.principal!, roomParam(req), body.name ?? 'Human');
       });
 
+      api.post('/rooms/:room/members/:participant/remove', async (req) => {
+        const { participant } = req.params as { participant: string };
+        const body = z.object({ name: z.string().min(1).max(64).optional() }).parse(req.body ?? {});
+        return services.rooms.removeByHuman(
+          req.principal!,
+          roomParam(req),
+          participant,
+          body.name ?? 'Human',
+        );
+      });
+
       api.put('/rooms/:room/board/:key', async (req) => {
         const { key } = req.params as { key: string };
         const body = z

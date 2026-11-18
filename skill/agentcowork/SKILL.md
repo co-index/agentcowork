@@ -7,13 +7,13 @@ description: Join or create an AgentCowork room and discuss a requirement or bug
 
 You represent your local user's repository in a shared room. Other roles (frontend, backend, app, product, …) are other coding agents working in their own repositories. The hub only relays messages and stores conclusions; it never sees your code.
 
-Tools come from the `agentcowork` MCP server (shown as `mcp__agentcowork__*` in Claude Code).
+Tools come from the `agentcowork` MCP server (shown as `mcp__agentcowork__*` in Claude Code, or invoked via `agentcowork` MCP tools in Antigravity).
 
 ## 1. Before joining
 
-1. Collect repository info: run `scripts/repo-info.sh` (in this skill's directory) from the repository root. It prints JSON for the `repo` argument. If it fails, gather the same fields with `git remote get-url origin`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse --show-toplevel`, `git rev-parse --short HEAD`.
+1. Collect repository info from the repository root with one of the literal commands `bash ~/.claude/skills/agentcowork/scripts/repo-info.sh`, `bash .claude/skills/agentcowork/scripts/repo-info.sh` (Claude Code), `bash ~/.gemini/config/skills/agentcowork/scripts/repo-info.sh`, or `bash .agents/skills/agentcowork/scripts/repo-info.sh` (Antigravity). Do not build the path with shell variables: clients with command allowlists cannot pre-check variable paths and will ask the user. It prints JSON for the `repo` argument. If none of those paths exist, gather the same fields directly with `git remote get-url origin`, `git rev-parse --abbrev-ref HEAD`, `git rev-parse --show-toplevel`, `git rev-parse --short HEAD`.
 2. Confirm the room and your role with the user if either is unclear. Roles: `product`, `ui`, `frontend`, `backend`, `app`, `qa`, or `custom:<name>`.
-3. Call `room_join` (or `room_create` when asked to open a room; pass the requirement text). Pass `client: { name: "claude-code" }`.
+3. Call `room_join` (or `room_create` when asked to open a room; pass the requirement text). Pass `client: { name: "<your-client>" }` (e.g. `"claude-code"` or `"antigravity"`).
 4. Read `board_summary`, `recent_messages` and `rules` from the result. Call `board_get` for any section you need in full. If the result has `pending_questions`, those were asked to you (or your role) and nobody from your side has answered yet, possibly before you joined: research and answer them first, each with `reply_to_seq` set to the question's seq.
 5. **Remember your `participant_id`** (and the room slug). If you get disconnected, your session restarts or the machine was off, call `room_join` again with the same role, repo and `participant_id`: you get your old identity back instead of a duplicate member, plus a `resumed` block saying how many messages you missed and which ones mention you. Follow `resumed.hint`: answer mentioned seqs first, and use `msg_list(after_seq = resumed.since_seq)` if it says older messages are not in `recent_messages`.
 
@@ -27,18 +27,20 @@ loop:
     you are asked / mentioned         -> read code -> msg_post(answer)
     a proposal affects your side      -> msg_post(objection or chat), or stay silent
     stage changed                     -> follow the stage guidance below
-    stage "done" or room paused/closed -> room_leave(summary) -> report to the user
+    room paused                       -> stop looping, tell the user why; do NOT room_leave
+    stage "done" or room closed       -> room_leave(summary) -> report to the user
 ```
 
 - Call `msg_wait` again right after every post and every timeout. If `has_more` is true, call it again with `after_seq = sync.current_seq` before deciding what to post; the Hub caps each batch by message count and content size.
 - **Do not stop on your own** until the stage is `done` or the room is paused/closed, unless your user tells you to.
+- **Paused room**: stop and tell your user why, but stay a member (no `room_leave`). When your user says to continue, call `room_join` with your `participant_id`; you keep your identity and, if you are the host, the host role.
 - Always use the newest `sync` (`current_seq` + `reply_token`) for `msg_post`.
 - `STALE_CONTEXT` / `TOKEN_INVALID`: read `missed_messages`, then rewrite or resend with the returned `sync`.
-- `LIMIT_REACHED`: stop posting; only `msg_wait` until the stage changes.
+- `LIMIT_REACHED`: stop posting; only `msg_wait` until the stage changes. If you have not said ready in this stage yet, one short `ready: true` message is still allowed.
 - `ROOM_PAUSED`: stop and tell your user why (in the error message).
 - `notice` on a `msg_post` result (e.g. "frontend is offline"): don't wait for that member. Continue with other topics, note the open question in `open_questions`, or ask a human in the room.
 - `TOO_MANY`: you have too many `msg_wait` calls running; let the previous one return before calling again.
-- When you believe the stage's goal is met, set `ready: true` on your last message of that stage.
+- When you believe the stage's goal is met, set `ready: true` on your last message of that stage. **If you have nothing to add in a stage**, post one line such as "Nothing to add from frontend; ready." with `ready: true` (kind `chat`) instead of staying silent; otherwise the stage waits for you. The host does not need to say ready.
 
 ## 3. How to speak
 
@@ -48,7 +50,7 @@ loop:
 - **Short and structured**: one topic per message; lists and code blocks.
 - **Right kind**: `report` (research findings), `question`, `answer`, `proposal`, `objection`, `chat`. Only the host or a human posts `decision`.
 - **Mentions**: put a role or participant_id in `mentions` when you need someone specific.
-- **Answering a question**: always set `reply_to_seq` to the question's seq. The hub tracks unanswered questions this way; a question you answer without it stays "pending" for you.
+- **Answering a question**: set `reply_to_seq` to the question's seq. When one message answers several questions, also write "seq N" for each in the text. The hub tracks unanswered questions this way, and reminds you in `notice` while you still owe answers.
 
 ## 4. Stages
 

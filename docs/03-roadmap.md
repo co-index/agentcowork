@@ -23,7 +23,7 @@
 
 **验收：**
 1. 开两个 worktree，各起一个 Claude Code，加入同一个房间，针对一个真实的小需求连续讨论 10 轮以上，中途不需要人手动"戳"它们（2026-10-28 用 Claude Code × Codex 实测：无人干预走完全部 6 个阶段，共 9 条 agent 发言加 6 次阶段推进；双方各自 5～9 次 `msg_wait` 循环，尚未达到 10 轮以上，需要更长的需求再测一次）
-2. ✅ 实测并记录各客户端的工具调用超时：Claude Code、Codex 已测（2026-10-28，均能撑满 240 秒），Cursor、Gemini CLI 待测。结论见 `docs/05-client-compat.md`
+2. ✅ 实测并记录各客户端的工具调用超时：Claude Code、Codex 已测（2026-10-28，均能撑满 240 秒），Antigravity 已测（2026-11-18，180 秒硬超时，Hub 自动收紧到 150 秒），Cursor、Gemini CLI 待测。结论见 `docs/05-client-compat.md`
 3. ✅ 在 nginx 反向代理后面，长时间等待不被切断（2026-10-22 实测，见 `docs/05-client-compat.md`；同时加入了 SSE 可续传）
 
 ## M2 · 结论板、阶段与行为规范
@@ -38,7 +38,7 @@
 - [x] Host Web 控制：创建房间、编辑 Board、推进阶段、暂停恢复和关闭房间
 - [x] Web 接入页：Claude Code / Codex 一键复制配置、行为规范下载和入房指令
 
-**验收：** 用一个真实需求从 `briefing` 走到 `done`，Board 中产出可用的 `contract` 和 `plan.frontend`、`plan.backend`。
+**验收：** 用一个真实需求从 `briefing` 走到 `done`，Board 中产出可用的 `contract` 和 `plan.frontend`、`plan.backend`。（2026-11-17 用模拟仓库做了四方模拟，两轮都产出了可用的契约和各端计划，见 `docs/05-client-compat.md` 3.5；仍需用同事的真实需求验证）
 
 ## M3 · Server 模式
 
@@ -56,6 +56,8 @@
 - [ ] `export` / `import` 房间迁移
 - [ ] agent 断线重连、Hub 重启后自动恢复会话（agent 侧已提前完成；Hub 重启后的自动化接回已验证：稳定 token + 新 MCP session + 原 `participant_id` 可恢复，旧 session 仍需客户端重新 initialize）
 - [x] 成员离线时的兜底（提前完成）：Hub 推算待回答问题，进房时交给对方；有成员离线时往后推进阶段需要确认；Web 显示离线时长和待回答问题（设计文档 9.2）
+- [x] 试点前的协作模型修复（提前完成，来自 2026-11-17 设计评审）：暂停时不离开、已离开成员可接回；离线阈值与等待上限解耦；ready 不受配额限制并在成员掉线时重算；agent 重启接管旧成员、Web 可移除成员；Web 席位不参与离线和 ready；人可回复问题；Board 编辑不再覆盖新版本；扩充脱敏
+- [x] 效果评测框架（提前完成）：`eval/` 下两个场景（需求到方案、跨端 Bug 排查）、v2 严格评分标准、支持 Claude Code 和 Antigravity 两种 agent 与评审，基线见 `docs/05-client-compat.md` 3.7
 - [ ] bug 房间模板和流程
 - [ ] 审计日志
 - [ ] 文档站，提供中英文 README

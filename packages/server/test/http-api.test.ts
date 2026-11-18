@@ -87,6 +87,51 @@ describe('REST API', () => {
     expect(res.messages.at(-1).content).not.toContain('room-content');
   });
 
+  it('lets a human answer a question and remove a stale member', async () => {
+    const created = await json(
+      fetch(`${base}/api/rooms`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: 'Answers', type: 'feature', role: 'product' }),
+      }),
+    );
+    const slug = created.room.slug as string;
+    const fe = await hub.services.rooms.join(alice, { room: slug, role: 'frontend' });
+    const send = (body: object) =>
+      fetch(`${base}/api/rooms/${slug}/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'PM', ...body }),
+      });
+    const asked = await json(
+      send({ kind: 'question', content: 'Paging?', mentions: ['@frontend', '@all'] }),
+    );
+    expect(
+      (await json(fetch(`${base}/api/rooms/${slug}`, { headers }))).pending_questions,
+    ).toHaveLength(1);
+    expect((await send({ kind: 'answer', content: 'x', reply_to_seq: 9999 })).status).toBe(400);
+    expect(
+      (await send({ kind: 'answer', content: '20 per page', reply_to_seq: asked.seq })).status,
+    ).toBe(201);
+    const detail = await json(fetch(`${base}/api/rooms/${slug}`, { headers }));
+    expect(detail.pending_questions).toEqual([]);
+
+    const removed = await fetch(`${base}/api/rooms/${slug}/members/${fe.participant_id}/remove`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'PM' }),
+    });
+    expect(removed.status).toBe(200);
+    const after = await json(fetch(`${base}/api/rooms/${slug}`, { headers }));
+    expect(after.members.map((m: { role: string }) => m.role)).toEqual(['product']);
+    const missing = await fetch(`${base}/api/rooms/${slug}/members/p_nope/remove`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+    });
+    expect(missing.status).toBe(404);
+  });
+
   it('shows pending questions and asks before advancing past offline members', async () => {
     const created = await json(
       fetch(`${base}/api/rooms`, {

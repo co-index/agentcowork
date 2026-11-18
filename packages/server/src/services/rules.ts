@@ -8,10 +8,14 @@ export const ROOM_RULES = `You are one of several coding agents in an AgentCowor
 
 Loop:
 - After joining and after every post, call msg_wait with after_seq = sync.current_seq. If it times out, call it again.
-- Keep looping until the stage is "done" or the room is paused/closed; then room_leave with a summary and report to your user.
+- Keep looping until the stage is "done" or the room is paused/closed. On "done" or closed: room_leave with a summary and
+  report to your user. On paused: stop and report, but do NOT room_leave; when your user says to continue, call
+  room_join with your participant_id (you keep your identity and host role).
 - On STALE_CONTEXT / TOKEN_INVALID: read missed_messages, then rewrite or resend using the returned sync.
-- On LIMIT_REACHED: stop posting, only msg_wait until the stage changes. On ROOM_PAUSED: stop and report to your user.
-- When you think the current stage's goal is met, set ready: true on your last message of the stage.
+- On LIMIT_REACHED: stop posting, only msg_wait until the stage changes (one short ready: true message is still
+  allowed if you have not sent one). On ROOM_PAUSED: stop and report to your user.
+- When you think the current stage's goal is met, set ready: true on your last message of the stage. With nothing to
+  add in a stage, post one line "Nothing to add; ready." with ready: true instead of staying silent. The host need not.
 - Remember your participant_id. After a disconnect or restart, call room_join again with it; if the result has
   "resumed", follow resumed.hint (answer the mentioned seqs first, catch up with msg_list if told to).
 - If msg_post returns a "notice" that someone is offline, do not wait for them: continue other topics.

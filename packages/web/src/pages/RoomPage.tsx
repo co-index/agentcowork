@@ -18,6 +18,7 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
   const [hasOlder, setHasOlder] = useState(false);
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<MessageView | null>(null);
 
   const refreshDetail = useCallback(
     () =>
@@ -119,7 +120,17 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
             房间已暂停：{detail.pause_reason ?? '等待人来处理'}。在下方发言即可恢复讨论。
           </p>
         )}
-        <Members members={detail.members} hostId={room.host?.participant_id} />
+        <Members
+          members={detail.members}
+          hostId={room.host?.participant_id}
+          onRemove={(m) => {
+            if (!window.confirm(`移除 ${m.display_name}？它的 agent 之后仍可以用原身份重新加入。`))
+              return;
+            void api
+              .removeMember(slug, m.participant_id, 'Human')
+              .then(refreshDetail, (e: Error) => window.alert(e.message));
+          }}
+        />
         <PendingQuestions questions={detail.pending_questions} members={detail.members} />
       </header>
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[3fr_2fr] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-1">
@@ -129,8 +140,15 @@ export function RoomPage({ api, slug }: { api: Api; slug: string }) {
             members={detail.members}
             hasOlder={hasOlder}
             onLoadOlder={() => void loadOlder()}
+            onReply={setReplyTo}
           />
-          <Composer api={api} slug={slug} disabled={room.status === 'closed'} />
+          <Composer
+            api={api}
+            slug={slug}
+            disabled={room.status === 'closed'}
+            replyTo={replyTo}
+            onClearReply={() => setReplyTo(null)}
+          />
         </div>
         <Board
           api={api}

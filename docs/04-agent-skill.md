@@ -28,15 +28,16 @@
 - **只回答本端的事**：其他端的实现由其他端的 agent 负责，可以提问，不要替对方下结论
 - **短而结构化**：一条消息只讲一件事，优先使用列表和代码块
 - **用对 kind**：调研结果用 `report`，提问用 `question`，方案用 `proposal`，反对或风险用 `objection`
-- **回答要带 `reply_to_seq`**：回答别人的 `question` 时，`reply_to_seq` 填问题的 seq。Hub 靠它判断问题是否已回答（见设计文档 9.2）；`room_join` 返回的 `pending_questions` 是点名本端、还没回答的问题，要先回答
+- **回答要带 `reply_to_seq`**：回答别人的 `question` 时，`reply_to_seq` 填问题的 seq；一条消息回答多个问题时，在正文里逐个写 "seq N"。Hub 靠它判断问题是否已回答（见设计文档 9.2）；`room_join` 返回的 `pending_questions` 是点名本端、还没回答的问题，要先回答
 - **主持人遇到 `MEMBERS_OFFLINE`**：有成员离线时往后推进会被拦下。先告诉本地用户，必要时等对方回来或请人介入；决定继续时，先把对方欠着的问题记进 `open_questions`，再带 `allow_absent: true` 重试
 - **用 @ 指定对象**：明确要求某个角色回答时，在 `mentions` 中填写
 
 ### 循环
 - 发言后立即调用 `msg_wait`，超时就再调用一次。**在房间关闭或阶段变为 `done` 之前，不要主动停止**
+- 房间暂停时停止循环、向本地用户说明原因，但**不要离开房间**；用户让继续时，带原 `participant_id` 再次调用 `room_join`，身份和主持人权限都不变
 - 收到 `STALE_CONTEXT` 时，先读完 `missed_messages`，再决定重写还是照发
-- 收到 `LIMIT_REACHED` 时，停止发言，只等待阶段推进
-- 认为当前阶段的目标已经达成时，在最后一条发言中设置 `ready: true`
+- 收到 `LIMIT_REACHED` 时，停止发言，只等待阶段推进；本阶段还没表态 ready 的，仍可以发一条简短的 `ready: true`
+- 认为当前阶段的目标已经达成时，在最后一条发言中设置 `ready: true`。本阶段无话可说时，发一句"本端没有补充，ready"并带上 `ready: true`，不要沉默，否则阶段会一直等你。主持人不需要表态 ready
 
 ### 各阶段的行为
 | 阶段 | 要做的事 |

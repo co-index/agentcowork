@@ -18,6 +18,14 @@ import type { Principal } from '../../domain/models.js';
 import { fenceUntrusted } from '../../security/untrusted.js';
 
 export const SERVER_INFO = { name: 'agentcowork', version: '0.0.0' };
+export const ANTIGRAVITY_WAIT_CAP_SECONDS = 150;
+
+/** Per-tool-call timeout caps for MCP clients whose own deadline is shorter than the hub default. */
+export function clientWaitCapSeconds(clientName?: string): number | undefined {
+  // Antigravity's MCP client enforces a 3m0s (180s) context deadline even with progress notifications.
+  if (clientName?.toLowerCase().startsWith('antigravity')) return ANTIGRAVITY_WAIT_CAP_SECONDS;
+  return undefined;
+}
 
 /** Per-session hooks supplied by the endpoint. */
 export interface SessionHooks {
@@ -112,7 +120,12 @@ export function createMcpServer(services: Services, hooks: SessionHooks): McpSer
         const e = extra as unknown as Extra;
         hooks.track(args.participant_id);
         const progressToken = e._meta?.progressToken;
-        return services.messages.wait(principalOf(extra), args, {
+        const clientCap = clientWaitCapSeconds(server.server.getClientVersion()?.name);
+        const waitArgs =
+          clientCap === undefined
+            ? args
+            : { ...args, timeout_seconds: Math.min(args.timeout_seconds ?? clientCap, clientCap) };
+        return services.messages.wait(principalOf(extra), waitArgs, {
           signal: e.signal,
           onHeartbeat:
             progressToken === undefined

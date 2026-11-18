@@ -29,6 +29,41 @@ describe('redact', () => {
       '-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----',
       '[REDACTED:private_key]',
     ],
+    [
+      'url_credentials',
+      'mysql://root:p@ss/w0rd@db.internal:3306/app',
+      'mysql://root:[REDACTED:password]@db.internal:3306/app',
+    ],
+    ['aliyun_access_key', `id LTAI${'y'.repeat(20)}`, 'id [REDACTED:aliyun_access_key]'],
+    [
+      'tencent_secret_id',
+      `SecretId AKID${'x'.repeat(32)}`,
+      'SecretId [REDACTED:tencent_secret_id]',
+    ],
+    [
+      'auth_header',
+      'Authorization: Bearer 9f8e7d6c5b4a39281706abcdef',
+      'Authorization: Bearer [REDACTED:auth_header]',
+    ],
+    ['cookie', 'Cookie: SESSIONID=abc123def456; theme=dark', 'Cookie: [REDACTED:cookie]'],
+    ['secret_value', 'DB_PASSWORD=hunter2!x', 'DB_PASSWORD=[REDACTED:secret_value]'],
+    [
+      'secret_value',
+      '{"password": "s3cr3t-pass", "user": "bob"}',
+      '{"password": "[REDACTED:secret_value]", "user": "bob"}',
+    ],
+    [
+      'secret_value',
+      'datasource:\n  password: Pr0dPass!\n',
+      'datasource:\n  password: [REDACTED:secret_value]\n',
+    ],
+    [
+      'secret_value',
+      'GET /login?user=bob&token=abcd1234efgh&x=1',
+      'GET /login?user=bob&token=[REDACTED:secret_value]&x=1',
+    ],
+    ['phone', 'call 13812345678 please', 'call [REDACTED:phone] please'],
+    ['id_card', 'id 110101199003077777 here', 'id [REDACTED:id_card] here'],
   ];
 
   it.each(cases)('masks %s', (kind, input, expected) => {
@@ -39,6 +74,16 @@ describe('redact', () => {
 
   it('leaves ordinary text alone', () => {
     const text = 'GET /orders?page=2 returns { id, sk: "abc" }; see src/api.ts:42';
+    expect(redact(text)).toEqual({ text, kinds: [] });
+  });
+
+  it.each([
+    'interface U { password: string; token: string }',
+    'const token = await getToken();',
+    'password: z.string().min(8)',
+    'ts 1731830400000 and order 2024111712345',
+    'see https://example.com/a@b and mail a@b.com',
+  ])('does not mask code or ordinary numbers: %s', (text) => {
     expect(redact(text)).toEqual({ text, kinds: [] });
   });
 

@@ -216,16 +216,6 @@ export class SqliteRepository implements Repository {
       .all() as Message[];
   }
 
-  async listReplies(roomId: string, seqs: number[]): Promise<Message[]> {
-    if (seqs.length === 0) return [];
-    return this.db
-      .select()
-      .from(schema.messages)
-      .where(and(eq(schema.messages.roomId, roomId), inArray(schema.messages.replyToSeq, seqs)))
-      .orderBy(schema.messages.seq)
-      .all() as Message[];
-  }
-
   async listBoard(roomId: string, keys?: string[]): Promise<BoardSection[]> {
     const conds = [eq(schema.boardSections.roomId, roomId)];
     if (keys?.length) conds.push(inArray(schema.boardSections.key, keys));

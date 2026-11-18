@@ -9,7 +9,15 @@ import {
   type RoomSummaryView,
 } from '@agentcowork/shared';
 import { AppError } from '../domain/errors.js';
-import { mentions, type Participant, type Principal, type Room } from '../domain/models.js';
+import {
+  actorLabel,
+  isWebSeat,
+  mentions,
+  sameRepo,
+  type Participant,
+  type Principal,
+  type Room,
+} from '../domain/models.js';
 import type { Access } from './access.js';
 import type { BoardService } from './board-service.js';
 import { redact } from '../security/redact.js';
@@ -172,6 +180,27 @@ export class RoomService {
     return { ok: true };
   }
 
+  /** A human removes a member from the Web UI, e.g. a stale one left behind by a restart. */
+  async removeByHuman(
+    principal: Principal,
+    roomRef: string,
+    participantId: string,
+    name: string,
+  ): Promise<{ ok: true }> {
+    const room = await this.access.requireRoom(roomRef);
+    const p = await this.repo.findParticipant(participantId);
+    if (!p || p.roomId !== room.id) {
+      throw new AppError('NOT_FOUND', `No participant "${participantId}" in this room`);
+    }
+    if (p.status === 'left') return { ok: true };
+    const now = this.clock.now();
+    await this.repo.updateParticipant(p.id, { status: 'left', leftAt: now });
+    this.bus.publish({ type: 'participant.updated', roomId: room.id, participantId: p.id });
+    const by = actorLabel({ kind: 'human', principal, name: name || principal.name });
+    await this.thread.system(room.id, `${p.displayName} was removed by ${by}.`);
+    return { ok: true };
+  }
+
   private async addParticipant(
     principal: Principal,
     room: Room,
@@ -184,7 +213,7 @@ export class RoomService {
       userId: principal.userId,
       role: input.role,
       displayName: input.display_name ?? `${input.role}·${principal.name}`,
-      repo: input.repo ?? null,
+      repo: input.repo ? sanitizeRepo(input.repo) : null,
       client: input.client ?? null,
       status: 'online',
       lastSeenAt: now,
@@ -214,7 +243,8 @@ export class RoomService {
   ): Promise<Participant | undefined> {
     if (input.participant_id) {
       const p = await this.repo.findParticipant(input.participant_id);
-      if (!p || p.roomId !== roomId || p.status === 'left') {
+      // A participant that left (e.g. after a pause) may come back with its identity.
+      if (!p || p.roomId !== roomId) {
         throw new AppError(
           'NOT_A_PARTICIPANT',
           `"${input.participant_id}" cannot be resumed in this room; join without participant_id`,
@@ -225,14 +255,20 @@ export class RoomService {
       }
       return p;
     }
+    const repo = input.repo ?? null;
     const members = await this.repo.listParticipants(roomId);
     return members
       .filter(
         (m) =>
-          m.status === 'offline' &&
           m.userId === principal.userId &&
           m.role === input.role &&
-          sameRepo(m.repo, input.repo ?? null),
+          // A Web seat is only resumed explicitly (design 9.1).
+          !isWebSeat(m) &&
+          sameRepo(m.repo, repo) &&
+          (m.status === 'offline' ||
+            m.status === 'left' ||
+            // A restarted agent that forgot its id: same checkout, old one not listening.
+            (m.status === 'online' && !!m.repo?.worktree && m.repo.worktree === repo?.worktree)),
       )
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt)[0];
   }
@@ -245,15 +281,20 @@ export class RoomService {
       .filter((m) => m.senderType !== 'system' && mentions(m, p))
       .map((m) => m.seq);
 
+    const wasLeft = p.status === 'left';
     const changes = {
       ...(input.display_name ? { displayName: input.display_name } : {}),
-      ...(input.repo ? { repo: input.repo } : {}),
+      ...(input.repo ? { repo: sanitizeRepo(input.repo) } : {}),
       ...(input.client ? { client: input.client } : {}),
+      ...(wasLeft ? { leftAt: null } : {}),
     };
     if (Object.keys(changes).length > 0) await this.repo.updateParticipant(p.id, changes);
     const fresh = { ...p, ...(await this.repo.findParticipant(p.id))! };
     await this.access.setStatus(fresh, 'online');
-    await this.thread.system(room.id, `${fresh.displayName} reconnected.`);
+    await this.thread.system(
+      room.id,
+      `${fresh.displayName} ${wasLeft ? 'rejoined' : 'reconnected'}.`,
+    );
 
     const result = await this.joinResult(room, fresh);
     const unseen = fromOthers.filter((m) => m.seq < (result.recent_messages[0]?.seq ?? 0)).length;
@@ -318,9 +359,16 @@ export class RoomService {
   }
 }
 
-/** Same checkout: worktree when both know it, else repository name, else both unspecified. */
-function sameRepo(a: RepoInfo | null, b: RepoInfo | null): boolean {
-  if (!a || !b) return !a && !b;
-  if (a.worktree && b.worktree) return a.worktree === b.worktree;
-  return a.name === b.name;
+/** Strips credentials from the remote URL and masks secrets in the other repo fields. */
+function sanitizeRepo(repo: RepoInfo): RepoInfo {
+  const clean = (value: string) => redact(value).text;
+  return {
+    ...repo,
+    name: clean(repo.name),
+    ...(repo.remote_url !== undefined
+      ? { remote_url: clean(repo.remote_url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/i, '$1')) }
+      : {}),
+    ...(repo.branch !== undefined ? { branch: clean(repo.branch) } : {}),
+    ...(repo.worktree !== undefined ? { worktree: clean(repo.worktree) } : {}),
+  };
 }

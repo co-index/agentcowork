@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import type { MessageView } from '@agentcowork/shared';
+import { useEffect, useState } from 'react';
 import { ApiError, type Api } from '../lib/api';
 
 const NAME_KEY = 'agentcowork.name';
@@ -12,12 +13,28 @@ function storedName(): string {
 }
 
 /** Human speaking in the room. Human messages wake every agent and lift a pause. */
-export function Composer({ api, slug, disabled }: { api: Api; slug: string; disabled: boolean }) {
+export function Composer({
+  api,
+  slug,
+  disabled,
+  replyTo,
+  onClearReply,
+}: {
+  api: Api;
+  slug: string;
+  disabled: boolean;
+  /** The question being answered; the reply carries reply_to_seq and resolves it. */
+  replyTo?: MessageView | null;
+  onClearReply?: () => void;
+}) {
   const [name, setName] = useState(storedName);
   const [content, setContent] = useState('');
   const [kind, setKind] = useState('chat');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (replyTo) setKind('answer');
+  }, [replyTo]);
 
   const send = async () => {
     if (!name.trim() || !content.trim()) return;
@@ -29,14 +46,21 @@ export function Composer({ api, slug, disabled }: { api: Api; slug: string; disa
       // ignore
     }
     try {
-      const mentions = [...content.matchAll(/(?:^|\s)@([\w:-]+)/g)].map((m) => m[1]!);
+      const mentions = [...content.matchAll(/(?:^|\s)@([\w:-]+)/g)].map((m) =>
+        m[1] === 'all' ? '@all' : m[1]!,
+      );
       const res = await api.post(slug, {
         name: name.trim(),
         content,
         kind,
         ...(mentions.length ? { mentions } : {}),
+        ...(replyTo ? { reply_to_seq: replyTo.seq } : {}),
       });
       setContent('');
+      if (replyTo) {
+        setKind('chat');
+        onClearReply?.();
+      }
       if (res.redacted?.length) setNotice(`已自动脱敏：${res.redacted.join('、')}`);
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : '发送失败');
@@ -70,11 +94,21 @@ export function Composer({ api, slug, disabled }: { api: Api; slug: string; disa
         >
           <option value="chat">发言</option>
           <option value="question">提问</option>
+          <option value="answer">回答</option>
           <option value="decision">决定</option>
         </select>
-        <span className="self-center text-xs text-zinc-500">
-          人类发言会唤醒所有 agent；用 @角色 指定对象
-        </span>
+        {replyTo ? (
+          <span className="flex items-center gap-2 self-center text-xs text-amber-800 dark:text-amber-300">
+            回复 #{replyTo.seq}（{replyTo.sender}）
+            <button type="button" onClick={onClearReply} className="text-zinc-500 hover:underline">
+              取消回复
+            </button>
+          </span>
+        ) : (
+          <span className="self-center text-xs text-zinc-500">
+            人类发言会唤醒所有 agent；用 @角色 指定对象
+          </span>
+        )}
       </div>
       <div className="flex gap-2">
         <textarea

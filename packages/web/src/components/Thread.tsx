@@ -18,9 +18,11 @@ interface Props {
   members: RoomDetail['members'];
   hasOlder: boolean;
   onLoadOlder: () => void;
+  /** Starts a human reply to a question (resolves it, design 9.2). */
+  onReply?: (m: MessageView) => void;
 }
 
-export function Thread({ messages, members, hasOlder, onLoadOlder }: Props) {
+export function Thread({ messages, members, hasOlder, onLoadOlder, onReply }: Props) {
   const [role, setRole] = useState('');
   const roleOf = useMemo(() => new Map(members.map((m) => [m.participant_id, m.role])), [members]);
   const roles = useMemo(() => [...new Set(members.map((m) => m.role))], [members]);
@@ -77,6 +79,7 @@ export function Thread({ messages, members, hasOlder, onLoadOlder }: Props) {
             key={m.seq}
             m={m}
             role={m.participant_id ? roleOf.get(m.participant_id) : undefined}
+            onReply={onReply}
           />
         ))}
         {visible.length === 0 && <p className="text-center text-sm text-zinc-500">暂无消息</p>}
@@ -85,7 +88,15 @@ export function Thread({ messages, members, hasOlder, onLoadOlder }: Props) {
   );
 }
 
-function MessageItem({ m, role }: { m: MessageView; role?: string }) {
+function MessageItem({
+  m,
+  role,
+  onReply,
+}: {
+  m: MessageView;
+  role?: string;
+  onReply?: (m: MessageView) => void;
+}) {
   if (m.sender_type === 'system') {
     return (
       <div className="flex gap-2 text-xs text-zinc-500">
@@ -120,11 +131,20 @@ function MessageItem({ m, role }: { m: MessageView; role?: string }) {
           </span>
         )}
         {m.reply_to_seq && <span className="text-zinc-500">回复 #{m.reply_to_seq}</span>}
-        {m.mentions.length > 0 && <span className="text-zinc-500">@{m.mentions.join(' @')}</span>}
+        {m.mentions.length > 0 && (
+          <span className="text-zinc-500">
+            {m.mentions.map((t) => `@${t.replace(/^@/, '')}`).join(' ')}
+          </span>
+        )}
         {m.ready && <span className="text-emerald-600 dark:text-emerald-400">✓ ready</span>}
         <time className="ml-auto text-zinc-400" dateTime={m.created_at} title={m.created_at}>
           {relativeTime(m.created_at)}
         </time>
+        {m.kind === 'question' && onReply && (
+          <button onClick={() => onReply(m)} className="text-zinc-500 hover:underline">
+            回复
+          </button>
+        )}
       </header>
       <Markdown text={m.content} />
       {m.evidence.length > 0 && (

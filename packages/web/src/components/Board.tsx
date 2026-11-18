@@ -46,19 +46,47 @@ function Section({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [content, setContent] = useState(section.content);
+  /** Edit draft: copied from the section when editing starts, with the version it is based on. */
+  const [draft, setDraft] = useState<{ content: string; baseVersion: number } | null>(null);
+  /** Newer content written by someone else while editing (VERSION_CONFLICT). */
+  const [conflict, setConflict] = useState<BoardSectionView | null>(null);
+  const editing = draft !== null;
   const [history, setHistory] = useState<BoardSectionView[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const startEdit = () => {
+    setDraft({ content: section.content, baseVersion: section.version });
+    setConflict(null);
+    setNotice(null);
+  };
+  const cancelEdit = () => {
+    setDraft(null);
+    setConflict(null);
+    setNotice(null);
+  };
+
   const save = async () => {
+    if (!draft) return;
     try {
-      await api.updateBoard(slug, section.key, { content, base_version: section.version });
-      setEditing(false);
-      setNotice(null);
+      // Based on the version the draft was copied from, so newer edits are never overwritten.
+      await api.updateBoard(slug, section.key, {
+        content: draft.content,
+        base_version: draft.baseVersion,
+      });
+      cancelEdit();
       onChanged();
     } catch (err) {
-      setNotice(err instanceof ApiError ? err.message : '保存失败');
+      const current = err instanceof ApiError ? (err.data.current as BoardSectionView) : undefined;
+      if (err instanceof ApiError && err.code === 'VERSION_CONFLICT' && current) {
+        setConflict(current);
+        setDraft({ content: draft.content, baseVersion: current.version });
+        setNotice(
+          `编辑期间 ${current.updated_by} 已改到 v${current.version}。请对照下方最新内容合并后再保存`,
+        );
+        onChanged();
+      } else {
+        setNotice(err instanceof ApiError ? err.message : '保存失败');
+      }
     }
   };
 
@@ -82,7 +110,10 @@ function Section({
         <span className="ml-auto text-zinc-500">
           {section.updated_by} · {relativeTime(section.updated_at)}
         </span>
-        <button onClick={() => setEditing(!editing)} className="text-zinc-500 hover:underline">
+        <button
+          onClick={() => (editing ? cancelEdit() : startEdit())}
+          className="text-zinc-500 hover:underline"
+        >
           {editing ? '取消' : '编辑'}
         </button>
         {section.version > 1 && (
@@ -97,11 +128,24 @@ function Section({
             <>
               <textarea
                 className="min-h-32 w-full rounded border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-700"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
+                value={draft.content}
+                onChange={(e) => setDraft({ ...draft, content: e.target.value })}
                 maxLength={50000}
                 aria-label={`${section.key} 内容`}
               />
+              {conflict && (
+                <details
+                  open
+                  className="mt-2 rounded border border-amber-300 p-2 text-sm dark:border-amber-800"
+                >
+                  <summary className="cursor-pointer text-xs text-amber-800 dark:text-amber-300">
+                    最新内容 v{conflict.version}（{conflict.updated_by}）
+                  </summary>
+                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap text-xs">
+                    {conflict.content}
+                  </pre>
+                </details>
+              )}
               <div className="mt-2 flex items-center gap-2">
                 <button
                   onClick={() => void save()}

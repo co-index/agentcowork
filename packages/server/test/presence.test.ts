@@ -67,20 +67,24 @@ describe('presence and reconnect', () => {
       await waiting;
     });
 
-    it('a wait ending on its own does not count as the client being seen', async () => {
+    it('starts the offline clock when a wait hands back its result, not when it began', async () => {
       const { guest } = await setup();
-      const before = (await s.repo.findParticipant(guest.participant_id))!.lastSeenAt;
+      const start = now;
       const waiting = s.messages.wait(bob, {
         room: 'REQ-1',
         participant_id: guest.participant_id,
         after_seq: guest.sync.current_seq,
         timeout_seconds: 1,
       });
-      // The wait started at `before`; time passes while it is suspended, then it times out.
       await new Promise((r) => setTimeout(r, 20));
-      now += 3 * MIN;
+      // The wait is suspended for 4 minutes, then the agent reads code locally for 7 more.
+      now = start + 4 * MIN;
       await waiting;
-      expect((await s.repo.findParticipant(guest.participant_id))!.lastSeenAt).toBe(before);
+      expect((await s.repo.findParticipant(guest.participant_id))!.lastSeenAt).toBe(now);
+      now += 7 * MIN;
+      expect(await s.access.markStale(10 * MIN, () => false)).not.toContain(guest.participant_id);
+      now += 4 * MIN;
+      expect(await s.access.markStale(10 * MIN, () => false)).toContain(guest.participant_id);
     });
   });
 
@@ -115,15 +119,41 @@ describe('presence and reconnect', () => {
       await post(s, bob, again, again.sync, 'yes, they can');
     });
 
-    it('does not take over an online participant implicitly', async () => {
+    it('takes over an online, non-waiting participant only with the same worktree', async () => {
+      // A restarted agent that forgot its participant_id; the old one is not marked offline yet.
       const { guest } = await setup();
+      const again = await s.rooms.join(bob, {
+        room: 'REQ-1',
+        role: 'frontend',
+        repo: { name: 'admin-web', worktree: '/work/admin-web' },
+      });
+      expect(again.participant_id).toBe(guest.participant_id);
+      // Matching only by repository name never takes over a present member (shared Host user id).
+      const byName = await s.rooms.join(bob, {
+        room: 'REQ-1',
+        role: 'frontend',
+        repo: { name: 'admin-web' },
+      });
+      expect(byName.participant_id).not.toBe(guest.participant_id);
+    });
+
+    it('never takes over a participant that is listening in msg_wait', async () => {
+      const { guest } = await setup();
+      const ac = new AbortController();
+      const waiting = s.messages.wait(
+        bob,
+        { room: 'REQ-1', participant_id: guest.participant_id, after_seq: guest.sync.current_seq },
+        { signal: ac.signal },
+      );
+      await new Promise((r) => setTimeout(r, 20));
       const second = await s.rooms.join(bob, {
         room: 'REQ-1',
         role: 'frontend',
         repo: { name: 'admin-web', worktree: '/work/admin-web' },
       });
       expect(second.participant_id).not.toBe(guest.participant_id);
-      expect(second.resumed).toBeUndefined();
+      ac.abort();
+      await waiting;
     });
 
     it('does not resume across different worktrees', async () => {
@@ -137,7 +167,7 @@ describe('presence and reconnect', () => {
       expect(other.participant_id).not.toBe(guest.participant_id);
     });
 
-    it('resumes by explicit participant_id, but only your own and not after leaving', async () => {
+    it('resumes by explicit participant_id, only your own, also after leaving', async () => {
       const { guest } = await setup();
       const resumed = await s.rooms.join(bob, {
         room: 'REQ-1',
@@ -154,15 +184,16 @@ describe('presence and reconnect', () => {
         }),
         'FORBIDDEN',
       );
+      // Leaving (e.g. when a room was paused) does not lose the identity.
       await s.rooms.leave(bob, { room: 'REQ-1', participant_id: guest.participant_id });
-      await expectAppError(
-        s.rooms.join(bob, {
-          room: 'REQ-1',
-          role: 'frontend',
-          participant_id: guest.participant_id,
-        }),
-        'NOT_A_PARTICIPANT',
-      );
+      const back = await s.rooms.join(bob, {
+        room: 'REQ-1',
+        role: 'frontend',
+        participant_id: guest.participant_id,
+      });
+      expect(back.participant_id).toBe(guest.participant_id);
+      expect((await s.repo.findParticipant(guest.participant_id))?.status).toBe('online');
+      expect(back.recent_messages.at(-1)?.content).toMatch(/frontend·bob rejoined/);
     });
 
     it('points to msg_list when more was missed than recent_messages holds', async () => {

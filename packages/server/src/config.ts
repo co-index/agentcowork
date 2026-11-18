@@ -35,6 +35,8 @@ export interface Config {
   publicUrl: string | undefined;
   /** Upper bound for a single msg_wait. */
   waitMaxSeconds: number;
+  /** Inactivity after which a participant counts as offline (design 9.1). */
+  offlineAfterSeconds: number;
   /** Interval for MCP progress notifications while msg_wait is suspended. */
   heartbeatSeconds: number;
   /** Maximum content characters returned by one msg_wait or sync error. */
@@ -59,6 +61,7 @@ export function loadConfig(
     token: env.AGENTCOWORK_TOKEN || undefined,
     publicUrl: env.AGENTCOWORK_PUBLIC_URL || undefined,
     waitMaxSeconds: intEnv(env.AGENTCOWORK_WAIT_MAX_SECONDS, 240),
+    offlineAfterSeconds: intEnv(env.AGENTCOWORK_OFFLINE_AFTER_SECONDS, 600),
     heartbeatSeconds: intEnv(env.AGENTCOWORK_HEARTBEAT_SECONDS, 15),
     msgBatchMaxChars: intEnv(env.AGENTCOWORK_MSG_BATCH_MAX_CHARS, 50_000),
     webRoot: env.AGENTCOWORK_WEB_ROOT || defaultWebRoot(),
@@ -79,6 +82,11 @@ export function loadConfig(
     throw new Error('AGENTCOWORK_TOKEN must not be empty');
   }
   return merged;
+}
+
+/** Offline threshold in ms; never shorter than one full wait plus a minute of local work. */
+export function offlineAfterMs(config: Pick<Config, 'offlineAfterSeconds' | 'waitMaxSeconds'>) {
+  return Math.max(config.offlineAfterSeconds, config.waitMaxSeconds + 60) * 1000;
 }
 
 /** Published package ships the UI in `web/`; in the monorepo it is `packages/web/dist`. */

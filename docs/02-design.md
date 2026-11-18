@@ -122,6 +122,9 @@ AgentCowork host is running
 Add to Claude Code:
   claude mcp add --transport http agentcowork http://192.168.1.23:7420/mcp \
     --header "Authorization: Bearer acw_host_9f3a..."
+
+Add to Antigravity:
+  agy mcp add --header "Authorization: Bearer acw_host_9f3a..." agentcowork http://192.168.1.23:7420/mcp
 ```
 
 ### 5.2 Host 数据备份
@@ -152,6 +155,7 @@ agentcowork backup --db ~/.agentcowork/host.db --output ./backups/host-$(date +%
 | `AGENTCOWORK_TOKEN` | Host 每次启动随机生成；Server 必须指定 | Host/Server 的共享 bearer token；只在 Hub 进程内校验，设置后可跨重启继续使用。Server 预览版没有个人 token 或吊销能力。不要把 token 提交到仓库 |
 | `AGENTCOWORK_WAIT_MAX_SECONDS` | `240` | 单次 `msg_wait` 最长阻塞时间 |
 | `AGENTCOWORK_HEARTBEAT_SECONDS` | `15` | `msg_wait` 挂起期间发送 progress 通知的间隔 |
+| `AGENTCOWORK_OFFLINE_AFTER_SECONDS` | `600` | 参与者多久没有活动判为离线；至少取等待上限加 60 秒，见 9.1 |
 | `AGENTCOWORK_MSG_BATCH_MAX_CHARS` | `50000` | 单次 `msg_wait` / 同步冲突最多返回的消息内容字符数；超过后用 `msg_list` 或下一次 `msg_wait` 分页 |
 | `AGENTCOWORK_LOG` | 不输出 | HTTP 日志级别（如 `info`），用于排查 |
 | `AGENTCOWORK_MAX_SESSIONS` | `200` | 同时存在的 MCP 会话上限。满了先回收最久没有工具调用的会话（客户端常驻的 GET 流不算忙），全部都在调用中则返回 503 |
@@ -282,7 +286,7 @@ room_join({
 
 msg_wait({
   room, participant_id,
-  after_seq: number,            // 返回 seq 大于它的消息
+  after_seq: number,            // 返回 seq 大于它的消息；大于房间当前 seq 时按当前 seq 处理，避免跳过之后的消息
   timeout_seconds?: number,     // 默认等于上限 AGENTCOWORK_WAIT_MAX_SECONDS
   only_when_mentioned?: boolean // true 时，只有 @ 自己（或自己的角色）、阶段变更（M2）、人类发言才会唤醒；
                                 //   唤醒后返回 after_seq 之后的全部消息，而不只是 @ 自己的那条
@@ -298,10 +302,10 @@ msg_wait({
 msg_post({
   room, participant_id,
   content: string, kind: MessageKind,
-  mentions?: string[],          // participant_id 或 role
+  mentions?: string[],          // participant_id、role 或 "@all"；Hub 会去掉前导 @，"all" 视为 "@all"
   reply_to_seq?: number,
   evidence?: [{ path, lines?, commit? }],
-  ready?: boolean,              // 本端认为当前阶段可以结束
+  ready?: boolean,              // 本端认为当前阶段可以结束；本阶段第一条带 ready 的发言不受发言上限限制，见 8.3
   expected_last_seq: number,
   reply_token: string
 }) → 成功：{ seq, sync: { current_seq, reply_token }, redacted?: string[], notice?: string }
@@ -337,15 +341,17 @@ room_join
               ├ 被提问或被 @          → 查代码 → msg_post(answer)
               ├ 有方案需要评审         → msg_post(objection / chat)，或者不发言
               ├ 阶段变更              → 按新阶段的要求行动
+              ├ 房间暂停              → 停止循环，向本地用户汇报（不离开房间）
               └ 阶段为 done 或房间关闭 → room_leave(summary)，向本地用户汇报
 ```
 
 ### 8.2 严格同步（参考 AgentChatBus）
 
 1. `room_join`、`msg_wait`，以及 `msg_post` 成功或冲突时，都会签发新的 `reply_token`。token 绑定参与者和签发时的 `current_seq`，只能用一次，有效期 10 分钟
-2. `msg_post` 校验：token 有效、未使用，并且 `expected_last_seq == current_seq`（其他人发了新消息就算冲突；自己刚发的那条除外）。冲突判断的起点取 `min(expected_last_seq, token 签发时的 seq)`：token 证明了 agent 实际看到哪里，不能拿旧 token 自报一个更新的 seq 绕过同步
+2. `msg_post` 校验：token 有效、未使用，并且 `expected_last_seq == current_seq`（其他人发了新消息就算冲突；自己刚发的那条除外）。**纯通知类系统消息不算新上下文**：成员加入、离开、重连、被移除，Board 更新通知（不带 `@all` 的系统消息）既不会让发言冲突，也不会唤醒等待中的 agent（主持人除外，它要据此判断人是否到齐），下一次拿到消息时一并返回；阶段变更、暂停、"全员 ready" 这类广播消息（带 `@all`）照常算。2026-11 四方模拟中，这类通知造成了大部分冲突和空转唤醒。冲突判断的起点取 `min(expected_last_seq, token 签发时的 seq)`：token 证明了 agent 实际看到哪里，不能拿旧 token 自报一个更新的 seq 绕过同步
 3. 冲突时返回 `STALE_CONTEXT` 和漏掉的消息，保证 **agent 发言前一定看到了全部上下文**
 4. token 无效时同样附上漏掉的消息和新 token，agent 不会因为丢了 token 而卡住
+   `expected_last_seq` 超过房间当前 seq 时返回 `INVALID_ARGUMENT`，同样附上漏掉的消息和新 token；漏掉的消息从 token 签发时的 seq（token 无效时用参与者最后同步到的 seq）开始算，不能借一个虚高的 seq 拿到跳过中间消息的新 token
 5. 实现：所有消息写入（包括加入、离开等系统消息）都在同一把房间锁内完成，校验和写入不会被其他写入插队。v1 是进程内锁；多副本部署（M5）时需要换成数据库行锁或 Redis 锁
 
 ### 8.3 阶段
@@ -365,7 +371,10 @@ room_join
 **bug 房间：** `report → investigate → locate → fix → verify → done`，发言上限依次为 –、8、8、5、5、–
 
 **推进规则：**
-- 所有在线参与者都发过 `ready: true` 的消息后，Hub 发出系统提示"可以进入下一阶段"，由主持人调用 `stage_set` 推进
+- "全员 ready"后，Hub 发出系统提示"可以进入下一阶段"，由主持人调用 `stage_set` 推进；主持人是 Web 席位时，提示人在 Web 上推进
+- 统计范围：在线（`online` / `waiting`）的 agent 参与者，**不含主持人**（推进本来就由主持人决定）和 Web 席位（见 9.2）。满足任一条件即算 ready：本阶段发过 `ready: true` 的消息；本阶段发言数已达上限
+- 本阶段第一条带 `ready: true` 的发言不受发言上限限制，所以无话可说或配额已用完的成员也能表态。行为规范要求这时只发一句"本端没有补充，ready"
+- 除了有人发言时，成员离线或离开时也会重新统计，避免最后一个没 ready 的成员掉线后阶段卡住
 - 主持人可以随时推进或回退；房间里的人也可以在 Web 页面上操作
 - 阶段变更、"全员 ready"、房间暂停这类系统消息的 `mentions` 为 `["@all"]`，所以也会唤醒 `only_when_mentioned` 的等待者；`@all` 也可以由人使用
 - 每次阶段变更的系统消息里附带新阶段的行动指引，`msg_wait` 的 `hint` 中也会给出
@@ -377,7 +386,7 @@ room_join
 |---|---|
 | 阶段发言上限 | 超出后 `msg_post` 返回 `LIMIT_REACHED`，只能等待阶段推进。上限检查在消耗 `reply_token` 之前，被拒绝不会作废 token |
 | 房间总消息上限 | 默认 300 条 agent 消息，超出后房间进入 `paused`，通知人来介入。人在 Web 上发言、或主持人调用 `stage_set`（可以设为当前阶段）即可恢复，预算从恢复时重新计算 |
-| 空闲超时 | 30 分钟没有新消息，房间进入 `paused`。房间暂停时 `msg_wait` 立即返回并提示 agent 停止轮询、向本地用户汇报；`msg_post` 返回 `ROOM_PAUSED` |
+| 空闲超时 | 30 分钟没有新消息，房间进入 `paused`。房间暂停时 `msg_wait` 立即返回并提示 agent 停止轮询、向本地用户汇报；`msg_post` 返回 `ROOM_PAUSED`。agent **不离开房间**：恢复后由本地用户让它再次 `room_join`（带原 `participant_id`）接着讨论，身份和主持人权限都不变 |
 | 僵持检测 | 同一议题 `objection` 来回超过 3 轮，Hub 发系统消息建议人来裁决 |
 | 行为规范 | 规定"没有新信息就不发言"（见 04-agent-skill.md） |
 
@@ -385,16 +394,17 @@ room_join
 
 - 人在 Web 页面上的发言 `sender_type=human`，会唤醒所有正在等待的 agent，在 Thread 里有醒目标识
 - 只有人和主持人能发 `kind=decision`
-- 人可以踢出参与者、暂停或关闭房间、直接编辑 Board
+- 人可以在 Web 上移除成员（Host 模式也可用，主要用来清理 agent 重启后留下的旧成员）、暂停或关闭房间、直接编辑 Board
+- 人可以在 Web 上回复某个问题（带 `reply_to_seq`），人的回复会让这个问题整体不再待回答（见 9.2）
 
 ## 9. 长时间阻塞的技术细节
 
 - 只使用 **MCP Streamable HTTP**，不支持已弃用的 HTTP+SSE 传输
 - `msg_wait` 挂起期间，如果客户端请求里带了 `progressToken`，每 15 秒发一次 `notifications/progress` 保持连接；不支持的客户端靠缩短单次等待时间应对
-- 单次等待默认上限 240 秒，超时返回 `timed_out: true`，agent 再次调用即可
+- 单次等待默认上限 240 秒，超时返回 `timed_out: true`，agent 再次调用即可；对已知单次工具调用上限更短的客户端（例如 Antigravity 的 MCP 调用固定 180 秒超时），MCP 传输层按 `initialize` 握手的 `clientInfo` 自动把单次等待上限收紧到 150 秒，不需要用户额外改配置
 - 需要注意的外部超时（**M1 阶段必须实测**）：
   - 反向代理，例如 nginx 默认 `proxy_read_timeout 60s`。部署文档中需要提供调大后的配置，并关闭缓冲（`proxy_buffering off`）
-  - 客户端的工具调用超时：各客户端都有，需要逐一实测 Claude Code、Codex、Cursor、Gemini CLI，并把结论写进文档
+  - 客户端的工具调用超时：各客户端都有，需要逐一实测 Claude Code、Codex、Antigravity、Cursor、Gemini CLI，并把结论写进文档
 - `WaitCoordinator`：维护 `room_id → Set<waiter>`；消息写入后，通过 EventBus 通知，按唤醒条件筛选后 resolve 对应的 waiter；客户端断开时（`AbortSignal`）清理 waiter
 - 等待状态同步到参与者的 `status=waiting`，Web 页面上显示为"在听"
 - **先注册 waiter，再读积压消息**，避免读完和挂起之间到达的消息被漏掉
@@ -408,30 +418,38 @@ room_join
 **离线检测**（三种途径，任一满足即为 `offline`）：
 1. MCP 会话被客户端关闭（DELETE），且该参与者没有被其他存活会话使用
 2. 会话空闲 30 分钟被回收
-3. 后台每分钟检查：参与者没有挂起中的 `msg_wait`，且超过 `2 × AGENTCOWORK_WAIT_MAX_SECONDS`（默认 8 分钟）没有任何请求。电脑直接关机不会发出断开信号，靠这一条在几分钟内发现。`msg_wait` 自然超时结束不算"客户端活动"，不会刷新最后活动时间
+3. 后台每分钟检查：参与者没有挂起中的 `msg_wait`，且超过 `AGENTCOWORK_OFFLINE_AFTER_SECONDS`（默认 10 分钟，至少取等待上限加 60 秒）没有活动。活动包括任何请求，以及 `msg_wait` 结束、结果交还给客户端的时刻：agent 被唤醒后要在本地读代码、等用户确认权限，计时不能从等待开始算。电脑直接关机不会发出断开信号，靠这一条发现，最晚约为"等待上限 + 离线阈值"（默认 14 分钟）。离线阈值与等待上限分开配置，调小等待上限不会让离线判定变得更激进
+
+Web 席位（9.2）背后是人，不参与离线判定。
 
 离线成员不计入"全员 ready"，不会拖住阶段推进；它的消息和 Board 内容都保留。
 
 **断线重连**：参与者记录 `last_seen_seq`（最后一次拿到 sync 时覆盖到的 seq）。`room_join` 按以下顺序决定是否接回已有参与者：
-1. 传了 `participant_id`：必须属于本人、本房间、没有离开（在线也可以接回，对应客户端换了会话）
-2. 否则：同一用户、同一角色、同一仓库（双方都有 worktree 时比较 worktree，否则比较仓库名），并且处于 `offline` 的参与者里最近活动的一个。**在线的参与者不会被隐式接管**，因为 Host 模式下所有人共用一个用户 id
+1. 传了 `participant_id`：必须属于本人、本房间。在线的可以接回（客户端换了会话）；**已离开的也可以接回**（例如房间暂停后 agent 退出，恢复后再回来），身份、主持人权限和点名它的问题都保留
+2. 否则：同一用户、同一角色、同一仓库（双方都有 worktree 时比较 worktree，否则比较仓库名）的参与者里最近活动的一个，且满足以下之一：
+   - 处于 `offline` 或 `left`
+   - 处于 `online`、没有挂起中的 `msg_wait`，并且双方上报了相同的 worktree。对应 agent 重启后忘了 `participant_id`、旧成员还没被判离线的情况，避免留下"幽灵"成员
 
-接回时不新建成员，发一条 "X reconnected." 系统消息，并在返回中给出 `resumed`：离线期间别人发的消息数、其中 @ 自己的 seq、以及操作建议（超出 `recent_messages` 的部分用 `msg_list(after_seq=since_seq)` 补读）。
+   正在等待（`waiting`）的参与者不会被隐式接管；只比较仓库名时也不接管在线成员，因为 Host 模式下所有人共用一个用户 id。Web 席位只能用 `participant_id` 显式接回
 
-**离线提醒**：`msg_post` 的 `mentions` 中有成员离线或房间里不存在该角色时，返回 `notice`，提示发言者不要空等，可以先讨论别的或请人介入。
+接回时不新建成员，发一条 "X reconnected."（从离开状态接回时为 "X rejoined."）系统消息，并在返回中给出 `resumed`：离线期间别人发的消息数、其中 @ 自己的 seq、以及操作建议（超出 `recent_messages` 的部分用 `msg_list(after_seq=since_seq)` 补读）。
+
+**离线提醒**：`msg_post` 的 `mentions` 中有成员离线或房间里不存在该角色时，返回 `notice`，提示发言者不要空等，可以先讨论别的或请人介入。被点名的是 Web 席位时不提醒，因为人在网页上看得到。
 
 ### 9.2 待回答问题与缺席推进
 
 成员离线期间被问到的问题不能丢，也不能在他缺席时把讨论直接推进到底。
 
-**待回答问题**：`kind=question` 的消息（agent 或人发的都算），`mentions` 中每个目标（participant_id 或角色，`@all` 和提问者自己的 participant_id、角色除外）都要回答一次。目标对应的某个参与者发了一条 `reply_to_seq` 指向该问题的消息，这个目标就算答过了；所有目标都答过，问题就不再待回答。
+**待回答问题**：`kind=question` 的消息（agent 或人发的都算），`mentions` 中每个目标（participant_id 或角色，`@all` 和提问者自己的 participant_id、角色除外）都要回答一次。目标对应的某个参与者发了一条 `reply_to_seq` 指向该问题的消息，或者在正文里写了 `seq N` / `#N` 引用该问题（agent 一条消息常常回答好几个问题，而 `reply_to_seq` 只能填一个），这个目标就算答过了；所有目标都答过，问题就不再待回答。人在 Web 上回复（带 `reply_to_seq`）会让整个问题不再待回答。
 - 不单独建表，由 Hub 从消息记录推算（只读本房间的 question 和指向它们的回复）
-- 用 `reply_to_seq` 判断，所以行为规范要求回答问题时必须带上 `reply_to_seq`
+- 用 `reply_to_seq`（或正文引用）判断，所以行为规范要求回答问题时带上 `reply_to_seq`；agent 发言后如果仍欠着点名它的问题，`msg_post` 的 `notice` 会列出这些问题，提醒它回答并引用
 - 不按阶段过期：前面阶段没答的问题，到后面阶段仍然待回答
 
 **交给对方**：`room_join`（新加入或接回）时，返回点名自己且仍待回答的问题 `pending_questions`（完整消息，加注入边界），`hint` 要求先回答这些问题。这样提问时对方不在、甚至这个角色还没人加入，问题也会在他进房时交到他手上。
 
-**缺席推进需要确认**：往后推进阶段（目标阶段排在当前阶段之后）时，如果房间里有 `offline` 的成员，`stage_set` 返回 `MEMBERS_OFFLINE`，列出离线成员、最后在线时间和他们欠着的问题。主持人 agent 要么等对方回来或请人介入，要么把对方欠着的问题记进 `open_questions` 后带 `allow_absent: true` 重试。回退阶段、停在当前阶段不检查。人在 Web 上创建房间时得到的席位（`client.name = "web"`，由服务端设置）背后没有 agent，不算缺席；之后如果有 agent 带着自己的客户端信息接回这个席位，就照常检查。Web 上推进阶段走同样的检查，前端弹窗确认后带 `allow_absent` 重试。
+**缺席推进需要确认**：往后推进阶段（目标阶段排在当前阶段之后）时，如果房间里有 `offline` 的成员，`stage_set` 返回 `MEMBERS_OFFLINE`，列出离线成员、最后在线时间和他们欠着的问题。主持人 agent 要么等对方回来或请人介入，要么把对方欠着的问题记进 `open_questions` 后带 `allow_absent: true` 重试。回退阶段、停在当前阶段不检查。以下离线成员不算缺席：
+- **Web 席位**：人在 Web 上创建房间时得到的席位（`client.name = "web"`，由服务端设置），背后是人而不是 agent。它不参与离线判定、"全员 ready"统计和离线提醒，也不会被同角色的 agent 隐式接管；agent 用 `participant_id` 显式接回并带上自己的客户端信息后，按普通成员处理
+- **已被替代的旧成员**：同一角色、同一仓库已经有在场成员（例如 agent 重启后以新身份加入）Web 上推进阶段走同样的检查，前端弹窗确认后带 `allow_absent` 重试。
 
 **Web 展示**：成员显示"离线 N 分钟"；房间详情返回待回答问题列表，页面上列出"谁欠着哪些问题"。
 
@@ -444,7 +462,7 @@ room_join
 | 内网中无关的人访问房间 | Server 模式必须用 GitLab OAuth 登录；房间权限可以关联 GitLab 项目成员 | v1 |
 | 令牌泄露 | 只存哈希；Server 模式可以吊销；Host 模式默认每次启动随机生成，也可由管理员通过环境变量或 CLI 指定并自行保管 | v1 |
 | 明文传输被抓包 | 部署文档要求前置 HTTPS（内部证书） | v1 |
-| 讨论内容中带有密钥或个人数据 | 发言、写入 Board 时对常见密钥格式（AWS、GitLab / GitHub token、Slack、`sk-` API key、私钥、JWT、URL 中的密码、AgentCowork 自己的 token）脱敏，替换为 `[REDACTED:<类型>]`，并在返回的 `redacted` 字段中提示发言者 | v1 |
+| 讨论内容中带有密钥或个人数据 | 发言、写入 Board、离开总结时对常见格式脱敏，替换为 `[REDACTED:<类型>]`，并在返回的 `redacted` 字段中提示发言者。覆盖：私钥、AWS / 阿里云 / 腾讯云 AccessKey、GitLab / GitHub / Slack token、`sk-` API key、JWT、AgentCowork 自己的 token、`Authorization: Bearer/Basic` 头、`Cookie` 头、`password` / `secret` / `token` 等键值对（含 JSON 写法）、URL 中的密码、中国大陆手机号和身份证号。入房上报的仓库信息也会处理：`remote_url` 去掉用户名和密码部分，其余字段同样脱敏 | v1 |
 | **agent 之间的提示词注入** | 见 10.2 | v1 |
 | 数据丢失 | 文档提供 SQLite 在线备份脚本（`.backup`）和 cron 示例 | v1 |
 | 事后无法追溯 | 审计日志：加入、离开、Board 修改、阶段变更、踢人 | v2 |
@@ -469,7 +487,7 @@ room_join
 
 ### 11.2 Server 模式
 1. 人在 Web 上用 GitLab OAuth 登录（私有 GitLab 作为 OAuth Provider，scope 为 `read_user openid`）
-2. 在"我的令牌"页面生成个人访问令牌 `acw_pat_<random>`，页面直接给出 Claude Code、Codex 等客户端的配置命令
+2. 在"我的令牌"页面生成个人访问令牌 `acw_pat_<random>`，页面直接给出 Claude Code、Codex、Antigravity 等客户端的配置命令
 3. agent 连接时带上 `Authorization: Bearer acw_pat_...`，Hub 解析出对应的用户，所有发言都能追溯到具体的人
 4. 后续可选：MCP 标准 OAuth 流程，让客户端直接走浏览器授权，不再手动复制令牌
 
@@ -481,7 +499,7 @@ room_join
   - 左侧：Thread 实时消息流（SSE 推送），可以按角色筛选，人也能发言
   - 右侧：Board 分 section 展示，可以编辑，可以查看修改历史
   - 顶部：阶段进度条、成员和状态（在听 / 思考中 / 离线）、"推进阶段""暂停""关闭"按钮
-- 接入页（`#/connect`，房间页带房间号进入 `#/connect/<slug>`）：选择客户端（Claude Code / Codex）、角色和房间，按步骤给出可直接复制的 MCP 配置、行为规范安装命令和对 agent 说的第一句话。地址取自页面所在的 origin，令牌默认打码显示，复制时用原文
+- 接入页（`#/connect`，房间页带房间号进入 `#/connect/<slug>`）：选择客户端（Claude Code / Codex / Antigravity）、角色和房间，按步骤给出可直接复制的 MCP 配置、行为规范安装命令和对 agent 说的第一句话。地址取自页面所在的 origin，令牌默认打码显示，复制时用原文
 - 我的令牌页（Server 模式）
 - 房间导出
 
@@ -497,7 +515,8 @@ room_join
 | `GET /api/rooms/:room` | 房间详情：摘要、阶段列表、暂停原因、成员（含 ready、`last_seen_at`）、Board 全部 section、待回答问题 `pending_questions`（消息加上仍欠回答的目标 `waiting_on`，见 9.2） |
 | `GET /api/rooms/:room/messages?after_seq&before_seq&limit` | 分页读取消息，语义同 `msg_list` |
 | `POST /api/rooms` | 人类创建房间 `{ title, type, requirement?, role: "product" }`，创建者作为 Host |
-| `POST /api/rooms/:room/messages` | 人类发言 `{ name, content, kind, mentions? }`：不做严格同步，唤醒所有等待者，并恢复暂停的房间 |
+| `POST /api/rooms/:room/messages` | 人类发言 `{ name, content, kind, mentions?, reply_to_seq? }`：不做严格同步，唤醒所有等待者，并恢复暂停的房间；带 `reply_to_seq` 时视为回答该问题 |
+| `POST /api/rooms/:room/members/:participant/remove` | 人工移除成员 `{ name? }`：成员变为 `left`，发系统消息；之后它的 agent 仍可以用 `participant_id` 接回 |
 | `POST /api/rooms/:room/stage` | 人工推进或回退阶段 `{ name?, stage, allow_absent? }`；有成员离线时往后推进返回 409 `MEMBERS_OFFLINE`，见 9.2 |
 | `POST /api/rooms/:room/pause` / `resume` | 人工暂停或恢复房间 `{ name? }` |
 | `PUT /api/rooms/:room/board/:key` | 人工以 `base_version` 乐观锁更新 Board section |

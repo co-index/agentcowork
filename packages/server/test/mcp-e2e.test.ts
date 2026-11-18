@@ -1,10 +1,11 @@
 import type { JoinResult, MessageView, SyncContext, WaitResult } from '@agentcowork/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHub, type Hub } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { HostTokenAuth } from '../src/infra/auth/host-token-auth.js';
+import { ANTIGRAVITY_WAIT_CAP_SECONDS } from '../src/transports/mcp/tools.js';
 
 let hub: Hub;
 let baseUrl: string;
@@ -27,8 +28,8 @@ afterAll(async () => {
   await hub.close();
 });
 
-async function connect(token = auth.token): Promise<Client> {
-  const client = new Client({ name: 'test-agent', version: '0.0.0' });
+async function connect(token = auth.token, clientName = 'test-agent'): Promise<Client> {
+  const client = new Client({ name: clientName, version: '0.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
@@ -328,16 +329,44 @@ describe('MCP endpoint', () => {
     expect(chats).toHaveLength(ROUNDS * roles.length);
     expect(new Set(chats.map((m) => m.content)).size).toBe(chats.length);
 
-    // Strict sync: before each post, the author had seen every earlier message from others.
+    // Strict sync: before each post, the author had seen every earlier message from others,
+    // except notices (joins, board updates), which are not context worth a rewrite (design 8.2).
+    const isNotice = (m: MessageView) => m.sender_type === 'system' && !m.mentions.includes('@all');
     for (const { me, seen } of results) {
       for (const mine of chats.filter((m) => m.participant_id === me.participant_id)) {
         const earlierFromOthers = all.messages.filter(
-          (m) => m.seq < mine.seq && m.participant_id !== me.participant_id,
+          (m) => m.seq < mine.seq && m.participant_id !== me.participant_id && !isNotice(m),
         );
         for (const m of earlierFromOthers) expect(seen.has(m.seq)).toBe(true);
       }
     }
     console.info(`[e2e] 3 agents x ${ROUNDS} rounds, ${conflicts} sync conflicts resolved`);
     await Promise.all(clients.map((c) => c.close()));
+  });
+
+  it('caps msg_wait timeout below Antigravity 3-minute MCP deadline', async () => {
+    const agy = await connect(auth.token, 'antigravity-client');
+    const created = await call<JoinResult>(agy, 'room_create', {
+      title: 'Antigravity wait cap',
+      role: 'backend',
+    });
+    const spy = vi.spyOn(hub.services.messages, 'wait');
+    try {
+      const res = await call<WaitResult>(agy, 'msg_wait', {
+        room: created.room.slug,
+        participant_id: created.participant_id,
+        after_seq: created.sync.current_seq,
+        timeout_seconds: 240,
+      });
+      expect(res.timed_out).toBe(true);
+      expect(spy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ timeout_seconds: ANTIGRAVITY_WAIT_CAP_SECONDS }),
+        expect.anything(),
+      );
+    } finally {
+      spy.mockRestore();
+      await agy.close();
+    }
   });
 });
